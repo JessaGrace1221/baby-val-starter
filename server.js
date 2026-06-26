@@ -9,6 +9,13 @@ const multer  = require('multer');
 const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const {createGhlMcpService} = require('./services/ghlMcpService');
+const {
+  normalizeEmailAddress,
+  normalizePhoneNumber,
+  sanitizeDecisionMaker,
+  validEmail,
+  validPhone
+} = require('./services/leadContactValidation');
 const app     = express();
 
 app.use(cors());
@@ -56,35 +63,55 @@ const CLIENT_CONFIG = {
   projectType: process.env.VAL_PROJECT_TYPE || ''
 };
 const DEMO_MODE = /^(1|true|yes)$/i.test(String(process.env.VAL_DEMO_MODE || ''));
+const IS_PRODUCTION = process.env.NODE_ENV==='production' || !!process.env.RAILWAY_PUBLIC_DOMAIN;
 const VAL_SIGNUP_URL = process.env.VAL_SIGNUP_URL || 'https://graceintelligence.com/val';
 const GHL_KEY = process.env.GHL_KEY || process.env.GHL_API_KEY;
 const GHL_LOC = process.env.GHL_LOC || process.env.GHL_LOCATION_ID;
 const GHL_ACCOUNT_SLUGS = String(process.env.GHL_ACCOUNT_SLUGS || '').split(',').map(v=>v.trim()).filter(Boolean);
 const ANTHROPIC_KEY = process.env.ANTHROPIC_KEY;
-const OPENAI_KEY = process.env.OPENAI_KEY;
+const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
 const OPENAI_CHAT_MODEL = process.env.VAL_CHAT_MODEL || 'gpt-5.5';
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || process.env.DG_KEY || '';
+const DEEPGRAM_TTS_MODEL = process.env.DEEPGRAM_TTS_MODEL || process.env.VAL_TTS_VOICE || process.env.DEEPGRAM_VOICE_MODEL || 'aura-2-cora-en';
+const DEEPGRAM_STT_MODEL = process.env.DEEPGRAM_STT_MODEL || 'nova-2';
+const DEEPGRAM_STT_ENDPOINTING_MS = Math.min(Math.max(Number(process.env.DEEPGRAM_STT_ENDPOINTING_MS)||800,250),2000);
+const VAL_VOICE_RESPONSE_TEMPERATURE = Math.min(Math.max(Number(process.env.VAL_VOICE_RESPONSE_TEMPERATURE)||0.6,0),2);
 const ROCKETREACH_API_KEY = process.env.ROCKETREACH_API_KEY;
 const ROCKETREACH_BASE_URL = process.env.ROCKETREACH_BASE_URL || 'https://api.rocketreach.co/api/v2';
+const ROCKETREACH_REQUEST_TIMEOUT_MS = Number(process.env.ROCKETREACH_REQUEST_TIMEOUT_MS) || 15000;
+const ROCKETREACH_ENRICH_BATCH_MAX = Math.min(Math.max(Number(process.env.ROCKETREACH_ENRICH_BATCH_MAX)||25,1),50);
+const ROCKETREACH_ENRICH_CONCURRENCY = Math.min(Math.max(Number(process.env.ROCKETREACH_ENRICH_CONCURRENCY)||3,1),5);
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY;
 const APOLLO_BASE_URL = process.env.APOLLO_BASE_URL || 'https://api.apollo.io/api/v1';
+const APOLLO_REQUEST_TIMEOUT_MS = Number(process.env.APOLLO_REQUEST_TIMEOUT_MS) || 10000;
 const OUTSCRAPER_API_KEY = process.env.OUTSCRAPER_API_KEY;
 const OUTSCRAPER_LINKEDIN_POSTS_URL = process.env.OUTSCRAPER_LINKEDIN_POSTS_URL || '';
 const OUTSCRAPER_GOOGLE_MAPS_SEARCH_URL = process.env.OUTSCRAPER_GOOGLE_MAPS_SEARCH_URL || 'https://api.app.outscraper.com/maps/search-v3';
 const GHL_CALENDAR_ID = process.env.GHL_CALENDAR_ID || '';
 const GHL_CALENDAR_IDS = String(process.env.GHL_CALENDAR_IDS || GHL_CALENDAR_ID || '').split(',').map(v=>v.trim()).filter(Boolean);
 const GHL_OPPORTUNITY_PIPELINE_ID = process.env.GHL_OPPORTUNITY_PIPELINE_ID || process.env.GHL_PIPELINE_ID || '';
-const GHL_OPPORTUNITY_STAGE_ID = process.env.GHL_OPPORTUNITY_STAGE_ID || process.env.GHL_PIPELINE_STAGE_ID || '';
-const GHL_OPPORTUNITY_PIPELINE_NAME = process.env.GHL_OPPORTUNITY_PIPELINE_NAME || 'GOALL';
-const GHL_OPPORTUNITY_STAGE_NAME = process.env.GHL_OPPORTUNITY_STAGE_NAME || 'New Lead';
+const IS_MARK_GOALL_DEPLOYMENT = /mark.*goall|goall.*mark|mark-goall-val/i.test(`${CLIENT_CONFIG.clientName} ${CLIENT_CONFIG.clientSlug} ${CLIENT_CONFIG.brandName} ${CLIENT_CONFIG.projectName}`);
+const GHL_OPPORTUNITY_STAGE_ID = process.env.GHL_OPPORTUNITY_STAGE_ID || process.env.GHL_PIPELINE_STAGE_ID || (IS_MARK_GOALL_DEPLOYMENT?'da4a643b-ef5c-49b8-8e07-ed739e76e3ca':'');
+const GHL_OPPORTUNITY_PIPELINE_NAME = process.env.GHL_OPPORTUNITY_PIPELINE_NAME || (IS_MARK_GOALL_DEPLOYMENT?'GOALL Employers':'GOALL');
+const CONFIGURED_GHL_OPPORTUNITY_STAGE_NAME = String(process.env.GHL_OPPORTUNITY_STAGE_NAME||'').trim();
+const GHL_OPPORTUNITY_STAGE_NAME = IS_MARK_GOALL_DEPLOYMENT && (!CONFIGURED_GHL_OPPORTUNITY_STAGE_NAME || /^new lead$/i.test(CONFIGURED_GHL_OPPORTUNITY_STAGE_NAME))
+  ? 'New Limitless Lead Added'
+  : (CONFIGURED_GHL_OPPORTUNITY_STAGE_NAME || 'New Lead');
+const GHL_PARTNER_PIPELINE_ID = process.env.GHL_PARTNER_PIPELINE_ID || '';
+const GHL_PARTNER_STAGE_ID = process.env.GHL_PARTNER_STAGE_ID || '';
+const GHL_PARTNER_PIPELINE_NAME = process.env.GHL_PARTNER_PIPELINE_NAME || 'GOALL Strategic Partners';
+const GHL_PARTNER_STAGE_NAME = process.env.GHL_PARTNER_STAGE_NAME || 'New Limitless Lead Added';
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_CLIENT_ID || '';
 const MICROSOFT_CLIENT_SECRET = process.env.MICROSOFT_CLIENT_SECRET || '';
 const MICROSOFT_REDIRECT_URI = process.env.MICROSOFT_REDIRECT_URI || (CLIENT_CONFIG.publicBaseUrl ? `${CLIENT_CONFIG.publicBaseUrl.replace(/\/$/,'')}/auth/microsoft/callback` : '');
-const MICROSOFT_SCOPES = String(process.env.MICROSOFT_SCOPES || 'offline_access User.Read Mail.Read Calendars.Read').split(/\s+/).filter(Boolean);
-const GOALL_LEAD_SEARCH_MAX = Number(process.env.GOALL_LEAD_SEARCH_MAX) || 100;
+const MICROSOFT_SCOPES = String(process.env.MICROSOFT_SCOPES || 'offline_access User.Read Mail.Read Calendars.Read Calendars.ReadWrite').split(/\s+/).filter(Boolean);
+const GOALL_LEAD_SEARCH_MAX = Number(process.env.GOALL_LEAD_SEARCH_MAX) || 200;
 const GOALL_LEAD_RAW_SEARCH_MAX = Number(process.env.GOALL_LEAD_RAW_SEARCH_MAX) || Math.max(GOALL_LEAD_SEARCH_MAX*4,200);
 const GOALL_LEAD_SEARCH_CALLS_MAX = Number(process.env.GOALL_LEAD_SEARCH_CALLS_MAX) || 28;
-const GOALL_LEAD_DISCOVERY_TIMEOUT_MS = Number(process.env.GOALL_LEAD_DISCOVERY_TIMEOUT_MS) || 22000;
-const OUTSCRAPER_FETCH_TIMEOUT_MS = Number(process.env.OUTSCRAPER_FETCH_TIMEOUT_MS) || 14000;
+const GOALL_LEAD_DISCOVERY_TIMEOUT_MS = Number(process.env.GOALL_LEAD_DISCOVERY_TIMEOUT_MS) || 210000;
+const GOALL_LEAD_IMPORT_CONCURRENCY = Math.min(Math.max(Number(process.env.GOALL_LEAD_IMPORT_CONCURRENCY)||2,1),10);
+const GOALL_LEAD_INDUSTRIES_PER_RUN = Math.min(Math.max(Number(process.env.GOALL_LEAD_INDUSTRIES_PER_RUN)||20,5),GOALL_LEAD_SEARCH_CALLS_MAX);
+const GOALL_LEAD_MIXED_JOB_CONCURRENCY = Math.min(Math.max(Number(process.env.GOALL_LEAD_MIXED_JOB_CONCURRENCY)||20,1),20);
 const OPENAI_WEB_RESEARCH_TIMEOUT_MS = Number(process.env.OPENAI_WEB_RESEARCH_TIMEOUT_MS) || 12000;
 const GOALL_PIPELINE_MINIMUM = Number(process.env.GOALL_PIPELINE_MINIMUM) || 300;
 const GOALL_COMPANY_EMPLOYEE_MINIMUM = Number(process.env.GOALL_COMPANY_EMPLOYEE_MINIMUM) || 10;
@@ -178,6 +205,13 @@ const WESTWOOD_PRIORITY_INDUSTRIES = [
 ];
 let rocketReachLimitedUntil = 0;
 const requestContext = new AsyncLocalStorage();
+const SECURITY_ROLE_PERMISSIONS = {
+  owner:['email:read','email:send','calendar:read','calendar:write','transcript:read','transcript:process','contact:read','contact:write','settings:manage','security:view','audit:view','users:manage','support:manage','data:export','data:delete','dashboard_studio:view','dashboard_studio:request_config_change','dashboard_studio:request_code_change','dashboard_studio:approve_change','dashboard_studio:admin_review'],
+  admin:['email:read','email:send','calendar:read','calendar:write','transcript:read','transcript:process','contact:read','contact:write','settings:manage','security:view','audit:view','users:manage','dashboard_studio:view','dashboard_studio:request_config_change','dashboard_studio:request_code_change','dashboard_studio:approve_change','dashboard_studio:admin_review'],
+  member:['email:read','calendar:read','transcript:read','contact:read','contact:write'],
+  assistant:['email:read','calendar:read','transcript:read','contact:read'],
+  read_only:['calendar:read','transcript:read','contact:read']
+};
 const GHL_LEAD_FIELD_IDS = {
   lead_source_system: process.env.GHL_FIELD_LEAD_SOURCE_SYSTEM || '',
   lead_ingested_at: process.env.GHL_FIELD_LEAD_INGESTED_AT || '',
@@ -283,22 +317,13 @@ const GHL_LEAD_FIELD_IDS = {
   tag_confidence: process.env.GHL_FIELD_TAG_CONFIDENCE || '',
   needs_new_automation: process.env.GHL_FIELD_NEEDS_NEW_AUTOMATION || '',
   suggested_new_automation_tag: process.env.GHL_FIELD_SUGGESTED_NEW_AUTOMATION_TAG || '',
-  estimated_employee_count: process.env.GHL_FIELD_ESTIMATED_EMPLOYEE_COUNT || '',
-  employee_count_confidence: process.env.GHL_FIELD_EMPLOYEE_COUNT_CONFIDENCE || '',
-  employee_count_note: process.env.GHL_FIELD_EMPLOYEE_COUNT_NOTE || '',
-  growth_signals: process.env.GHL_FIELD_GROWTH_SIGNALS || '',
-  leadership_signals: process.env.GHL_FIELD_LEADERSHIP_SIGNALS || '',
-  workforce_pain_signals: process.env.GHL_FIELD_WORKFORCE_PAIN_SIGNALS || '',
-  engagement_activity_signals: process.env.GHL_FIELD_ENGAGEMENT_ACTIVITY_SIGNALS || '',
-  decision_maker_name: process.env.GHL_FIELD_DECISION_MAKER_NAME || '',
-  decision_maker_title: process.env.GHL_FIELD_DECISION_MAKER_TITLE || '',
-  decision_maker_email: process.env.GHL_FIELD_DECISION_MAKER_EMAIL || '',
-  decision_maker_phone: process.env.GHL_FIELD_DECISION_MAKER_PHONE || '',
-  decision_maker_linkedin: process.env.GHL_FIELD_DECISION_MAKER_LINKEDIN || '',
-  company_linkedin: process.env.GHL_FIELD_COMPANY_LINKEDIN || '',
-  goall_intelligence_note: process.env.GHL_FIELD_GOALL_INTELLIGENCE_NOTE || '',
-  recommended_first_call_angle: process.env.GHL_FIELD_RECOMMENDED_FIRST_CALL_ANGLE || '',
-  missing_data: process.env.GHL_FIELD_MISSING_DATA || ''
+  partner_type: process.env.GHL_FIELD_PARTNER_TYPE || '',
+  organization_size: process.env.GHL_FIELD_ORGANIZATION_SIZE || '',
+  potential_reach: process.env.GHL_FIELD_POTENTIAL_REACH || '',
+  partnership_fit_score: process.env.GHL_FIELD_PARTNERSHIP_FIT_SCORE || '',
+  reason_for_score: process.env.GHL_FIELD_REASON_FOR_SCORE || '',
+  source_urls: process.env.GHL_FIELD_SOURCE_URLS || '',
+  date_added: process.env.GHL_FIELD_DATE_ADDED || ''
 };
 const GHL_LEAD_FIELD_KEYS = {
   lead_source_system:'contact.lead_source_system',
@@ -405,22 +430,13 @@ const GHL_LEAD_FIELD_KEYS = {
   tag_confidence:'contact.tag_confidence',
   needs_new_automation:'contact.needs_new_automation',
   suggested_new_automation_tag:'contact.suggested_new_automation_tag',
-  estimated_employee_count:'contact.estimated_employee_count',
-  employee_count_confidence:'contact.employee_count_confidence',
-  employee_count_note:'contact.employee_count_note',
-  growth_signals:'contact.growth_signals',
-  leadership_signals:'contact.leadership_signals',
-  workforce_pain_signals:'contact.workforce_pain_signals',
-  engagement_activity_signals:'contact.engagement_activity_signals',
-  decision_maker_name:'contact.decision_maker_name',
-  decision_maker_title:'contact.decision_maker_title',
-  decision_maker_email:'contact.decision_maker_email',
-  decision_maker_phone:'contact.decision_maker_phone',
-  decision_maker_linkedin:'contact.decision_maker_linkedin',
-  company_linkedin:'contact.company_linkedin',
-  goall_intelligence_note:'contact.goall_intelligence_note',
-  recommended_first_call_angle:'contact.recommended_first_call_angle',
-  missing_data:'contact.missing_data'
+  partner_type:'contact.partner_type',
+  organization_size:'contact.organization_size',
+  potential_reach:'contact.potential_reach',
+  partnership_fit_score:'contact.partnership_fit_score',
+  reason_for_score:'contact.reason_for_score',
+  source_urls:'contact.source_urls',
+  date_added:'contact.date_added'
 };
 const GHL_LEAD_FIELD_NAME_ALIASES = {
   lead_source_system:['lead source system','lead_source_system'],
@@ -460,22 +476,6 @@ const GHL_LEAD_FIELD_NAME_ALIASES = {
   linkedin_current_title:['linkedin current title','linkedin_current_title'],
   linkedin_profile_location:['linkedin profile location','linkedin_profile_location'],
   signals_summary:['signals summary','signals_summary'],
-  estimated_employee_count:['estimated employee count','estimated_employee_count','employee count estimate','employee estimate'],
-  employee_count_confidence:['employee count confidence','employee_count_confidence','employee confidence'],
-  employee_count_note:['employee count note','employee_count_note','employee count explanation','employee estimate note'],
-  growth_signals:['growth signals','growth_signals','growth signal','expansion signals'],
-  leadership_signals:['leadership signals','leadership_signals','leadership signal'],
-  workforce_pain_signals:['workforce pain signals','workforce_pain_signals','workforce signals','hiring pain signals'],
-  engagement_activity_signals:['engagement activity signals','engagement_activity_signals','activity signals','company activity signals'],
-  decision_maker_name:['decision maker name','decision_maker_name','decision-maker name'],
-  decision_maker_title:['decision maker title','decision_maker_title','decision-maker title'],
-  decision_maker_email:['decision maker email','decision_maker_email','decision-maker email'],
-  decision_maker_phone:['decision maker phone','decision_maker_phone','decision-maker phone'],
-  decision_maker_linkedin:['decision maker linkedin','decision_maker_linkedin','decision-maker linkedin','decision maker linkedin profile'],
-  company_linkedin:['company linkedin','company_linkedin','company linkedin page'],
-  goall_intelligence_note:['goall intelligence note','goall_intelligence_note','lead intelligence summary','lead intelligence note','caller intelligence summary'],
-  recommended_first_call_angle:['recommended first call angle','recommended_first_call_angle','first call angle','opening line'],
-  missing_data:['missing data','missing_data','missing data note'],
   signals_positive_count:['signals positive count','signals_positive_count'],
   signals_top_indicators:['signals top indicators','signals_top_indicators'],
   signals_confidence:['signals confidence','signals_confidence'],
@@ -534,6 +534,13 @@ const GHL_LEAD_FIELD_NAME_ALIASES = {
   raw_web_signals_json:['raw web signals json','web signals'],
   news_raw_last_60_days:['news raw last 60 days','news last 60 days'],
   automation_tag:['automation tag','automationtag'],
+  partner_type:['partner type','partner_type'],
+  organization_size:['organization size','organization_size'],
+  potential_reach:['potential reach','potential_reach','estimated reach'],
+  partnership_fit_score:['partnership fit score','partnership_fit_score','partner fit score'],
+  reason_for_score:['reason for score','reason_for_score','partnership score reason'],
+  source_urls:['source urls','source_urls','research sources'],
+  date_added:['date added','date_added'],
   automation_tag_reason:['automation tag reason','automationtagreason'],
   normalized_industry:['normalized industry','normalizedindustry'],
   raw_industry:['raw industry','rawindustry'],
@@ -1047,7 +1054,9 @@ function writeJson(file,value){
   catch(e){ console.error('writeJson error:',e.message); }
 }
 function valStore(){
-  return readJson(STORE_FILE,{conversations:[],messages:[],transcripts:[],memoryItems:[],oauthTokens:{},users:[],sessions:[]});
+  const store=readJson(STORE_FILE,{conversations:[],messages:[],transcripts:[],memoryItems:[],oauthTokens:{},users:[],sessions:[]});
+  ['drafts','templates','transcriptIndex','transcriptParticipants','transcriptSummaries','transcriptTasks','transcriptContactUpdates','transcriptActionLog','tenantFeatureFlags','dashboardChangeRequests'].forEach(key=>{if(!Array.isArray(store[key]))store[key]=[];});
+  return store;
 }
 function saveValStore(store){ writeJson(STORE_FILE,store); }
 function uuid(prefix){
@@ -1118,6 +1127,629 @@ function authLog(event,details={}){
   if(safe.email) safe.email=String(safe.email).trim().toLowerCase();
   if(safe.token) delete safe.token;
   console.log(`[auth] ${event}`,safe);
+}
+function requestIp(req){
+  return String(req.headers['x-forwarded-for']||req.socket?.remoteAddress||'').split(',')[0].trim();
+}
+function requestUserAgent(req){
+  return String(req.headers['user-agent']||'').slice(0,500);
+}
+function redactSecurityValue(value){
+  if(value==null) return value;
+  if(typeof value==='string'){
+    if(/ya29\.|refresh_token|access_token|id_token|Bearer\s+|sk-[A-Za-z0-9]|gho_|ghp_|xox[baprs]-/i.test(value)) return '[REDACTED]';
+    if(value.length>1200) return value.slice(0,1200)+'…';
+    return value;
+  }
+  if(Array.isArray(value)) return value.map(redactSecurityValue);
+  if(typeof value==='object'){
+    const out={};
+    for(const [k,v] of Object.entries(value)){
+      out[k]=/(token|secret|password|authorization|api[_-]?key|refresh|access)/i.test(k)?'[REDACTED]':redactSecurityValue(v);
+    }
+    return out;
+  }
+  return value;
+}
+function userHasPermission(user,permission){
+  const role=String(user?.role||'owner').toLowerCase();
+  return (SECURITY_ROLE_PERMISSIONS[role]||SECURITY_ROLE_PERMISSIONS.read_only||[]).includes(permission);
+}
+function requirePermission(permission){
+  return function(req,res,next){
+    if(DEMO_MODE) return next();
+    if(userHasPermission(req.valUser,permission)) return next();
+    auditLog({req,action:'permission_denied',resourceType:'security',resourceId:permission,metadata:{role:req.valUser?.role||''},success:false}).catch(()=>{});
+    return res.status(403).json({ok:false,error:'Permission denied'});
+  };
+}
+async function auditLog({tenantId:tenant=tenantId(),userId=currentUserId(),action,resourceType='',resourceId='',metadata={},success=true,req=null}={}){
+  const record={id:uuid('audit'),tenantId:tenant,userId:userId||'',action:String(action||'unknown'),resourceType:String(resourceType||''),resourceId:String(resourceId||''),ipAddress:req?requestIp(req):'',userAgent:req?requestUserAgent(req):'',metadata:redactSecurityValue(metadata||{}),success:success!==false,createdAt:new Date().toISOString()};
+  if(pgPool){
+    await dbQuery('insert into security_audit_logs (id,tenant_id,user_id,action,resource_type,resource_id,ip_address,user_agent,metadata,success,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)',[record.id,record.tenantId,record.userId,record.action,record.resourceType,record.resourceId,record.ipAddress,record.userAgent,JSON.stringify(record.metadata),record.success,record.createdAt]);
+  }else{
+    const store=valStore();store.securityAuditLogs=store.securityAuditLogs||[];store.securityAuditLogs.push(record);saveValStore(store);
+  }
+  return record;
+}
+function requestHost(req){
+  return String(req?.headers?.['x-forwarded-host']||req?.headers?.host||'').split(',')[0].trim().toLowerCase();
+}
+function urlHost(value){
+  try{return new URL(String(value||'')).host.toLowerCase();}
+  catch(e){return '';}
+}
+function isMicheleDashboardStudioTenant(req=null){
+  const identity=[CLIENT_CONFIG.clientSlug,CLIENT_CONFIG.clientName,CLIENT_CONFIG.brandName,CLIENT_CONFIG.projectName,CLIENT_CONFIG.projectType].join(' ').toLowerCase();
+  const michele=/michele|julian|big trick|book_editor/.test(identity);
+  const targetHost='val-core-production-34ac.up.railway.app';
+  const host=requestHost(req);
+  const publicHost=urlHost(CLIENT_CONFIG.publicBaseUrl);
+  const targetDeployment=host===targetHost||publicHost===targetHost||(!process.env.RAILWAY_PUBLIC_DOMAIN&&process.env.NODE_ENV!=='production');
+  return !!(michele&&targetDeployment);
+}
+async function tenantFeatureEnabled(featureKey,{req=null,defaultEnabled=false}={}){
+  const tenant=tenantId();
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery('select enabled from tenant_feature_flags where tenant_id=$1 and feature_key=$2 limit 1',[tenant,featureKey]);
+    if(r.rows[0]) return !!r.rows[0].enabled;
+  }else{
+    const row=(valStore().tenantFeatureFlags||[]).find(f=>f.tenantId===tenant&&f.featureKey===featureKey);
+    if(row) return !!row.enabled;
+  }
+  return !!defaultEnabled;
+}
+async function dashboardStudioFeatureEnabled(req=null){
+  return tenantFeatureEnabled('dashboard_studio_beta',{req,defaultEnabled:true});
+}
+async function requireDashboardStudioAccess(req,res,next){
+  try{
+    if(!(await dashboardStudioFeatureEnabled(req))){
+      await auditLog({req,action:'dashboard_studio_access_denied',resourceType:'dashboard_studio',metadata:{host:requestHost(req),clientSlug:CLIENT_CONFIG.clientSlug},success:false}).catch(()=>{});
+      return res.status(404).json({ok:false,error:'Dashboard Studio is not enabled for this VAL.'});
+    }
+    if(DEMO_MODE) return next();
+    if(userHasPermission(req.valUser,'dashboard_studio:view')) return next();
+    await auditLog({req,action:'permission_denied',resourceType:'dashboard_studio',resourceId:'dashboard_studio:view',metadata:{role:req.valUser?.role||''},success:false}).catch(()=>{});
+    return res.status(403).json({ok:false,error:'Permission denied'});
+  }catch(e){return res.status(500).json({ok:false,error:'Dashboard Studio access could not be verified.'});}
+}
+function dashboardStudioApprovalPhrase(text){
+  return /\bjessa\s+says\s+deploy\b/i.test(String(text||''));
+}
+const DASHBOARD_STUDIO_UPDATE_POLICY={
+  approved_auto_deploy_categories:[
+    'ux_changes','dashboard_layout_changes','copy_wording_changes','button_labels','navigation_organization',
+    'color_branding_updates','existing_prompt_updates','existing_ai_behavior_tuning','existing_email_workflows',
+    'existing_calendar_workflows','existing_crm_ghl_workflows','existing_transcript_workflows','existing_task_workflows',
+    'bug_fixes_existing_functionality','existing_google_gmail_calendar_connection_improvements',
+    'existing_crm_ghl_connection_improvements','existing_railway_github_deployment_status_display'
+  ],
+  premium_categories:[
+    'new_integrations','new_external_apis','new_model_providers','new_paid_services','new_automation_categories',
+    'new_workflows_outside_approved_scope','new_oauth_providers','new_webhooks','new_background_jobs',
+    'new_data_sources','new_databases_or_vector_stores','new_api_keys_or_secrets','new_railway_variables',
+    'lead_scraping_volume_or_cost_increase','scraping_tools','payment_systems','banking_finance_tools',
+    'legal_medical_workflows','social_posting','image_generation','cross_tenant_changes','cost_security_compliance_risk'
+  ],
+  blocked_categories:[
+    'expose_secrets','bypass_auth','bypass_approval','modify_other_tenant','delete_audit_logs',
+    'destructive_database_changes','disable_security','direct_production_editing','unsafe_secret_exposure'
+  ],
+  approved_existing_connections:['email','gmail','google_calendar','calendar','crm','ghl','transcripts','tasks','railway_status','github_status'],
+  premium_request_message:'You’ve requested a premium update. Jessa will receive this request and review whether it can be added to your VAL. You don’t need to do anything else right now.',
+  premium_connection_message:'You’ve requested a premium connection. Jessa will receive this request and review whether it can be added to your VAL. You don’t need to do anything else right now.',
+  railway_variable_rules:{
+    usersMayEditRailwaySecrets:false,
+    tenantApiKeysStoredInRailway:false,
+    frontendShowsSecretValues:false,
+    displayMode:'configured_missing_only'
+  }
+};
+const TENANT_API_KEY_PROVIDER_REGISTRY={
+  openai:{providerId:'openai',displayName:'OpenAI',description:'Powers VAL chat, reasoning, transcript intelligence, drafting, and rewrite workflows.',credentialFields:['api_key'],enabledGlobally:true,requiresAdminApproval:false,defaultTenantAvailability:true,testType:'openai_models',docsUrl:'https://platform.openai.com/api-keys',costRiskCategory:'usage_based_ai',helpText:'Create an API key in OpenAI Platform → API keys, then paste it here.'},
+  anthropic:{providerId:'anthropic',displayName:'Anthropic / Claude',description:'Optional Claude model provider for approved VAL workflows.',credentialFields:['api_key'],enabledGlobally:true,requiresAdminApproval:false,defaultTenantAvailability:true,testType:'anthropic_models',docsUrl:'https://console.anthropic.com/settings/keys',costRiskCategory:'usage_based_ai',helpText:'Create an API key in Anthropic Console → API Keys.'},
+  outscraper:{providerId:'outscraper',displayName:'Outscraper',description:'Supports approved business search and enrichment workflows.',credentialFields:['api_key'],enabledGlobally:true,requiresAdminApproval:false,defaultTenantAvailability:true,testType:'presence_only',docsUrl:'https://app.outscraper.com/profile',costRiskCategory:'usage_based_data',helpText:'Paste the API key from your Outscraper account.'},
+  rocketreach:{providerId:'rocketreach',displayName:'RocketReach',description:'Supports approved contact enrichment workflows.',credentialFields:['api_key'],enabledGlobally:true,requiresAdminApproval:false,defaultTenantAvailability:true,testType:'presence_only',docsUrl:'https://rocketreach.co/api',costRiskCategory:'usage_based_data',helpText:'Paste the API key from your RocketReach account.'},
+  apollo:{providerId:'apollo',displayName:'Apollo',description:'Supports approved prospect/contact enrichment workflows.',credentialFields:['api_key'],enabledGlobally:true,requiresAdminApproval:false,defaultTenantAvailability:true,testType:'presence_only',docsUrl:'https://developer.apollo.io/',costRiskCategory:'usage_based_data',helpText:'Paste the API key from your Apollo account.'}
+};
+const TENANT_API_KEY_PROVIDERS=Object.keys(TENANT_API_KEY_PROVIDER_REGISTRY);
+function tenantApiKeyProvider(provider){
+  return TENANT_API_KEY_PROVIDER_REGISTRY[String(provider||'').trim().toLowerCase()]||null;
+}
+function tenantApiKeyPreview(value){
+  return maskSecret(value).replace('...','••••••');
+}
+function tenantApiKeyLooksValid(provider,value){
+  const key=String(value||'').trim();
+  const p=String(provider||'').toLowerCase();
+  if(!key) return false;
+  if(p==='openai') return /^sk-[A-Za-z0-9_\-]{20,}$/.test(key);
+  if(p==='anthropic') return /^sk-ant-[A-Za-z0-9_\-]{20,}$/.test(key);
+  return key.length>=8 && /^[\x20-\x7E]+$/.test(key);
+}
+function dashboardStudioPolicyMatch(lower,patterns){
+  return patterns.find(p=>p.test(lower))||null;
+}
+function dashboardStudioMissingVariableChecklist(text){
+  const raw=String(text||'');
+  const matches=[...raw.matchAll(/\b([A-Z][A-Z0-9_]{4,})\b/g)].map(m=>m[1]).filter(v=>/(KEY|TOKEN|SECRET|CLIENT|WEBHOOK|URL|ID)$/.test(v));
+  return [...new Set(matches)].map(name=>({name,status:'missing_or_unverified',exposure:'admin_only'}));
+}
+function classifyDashboardStudioRequest(text){
+  const raw=String(text||'').trim();
+  const lower=raw.toLowerCase();
+  if(!raw) return {classification:'needs_clarification',status:'needs_clarification',riskLevel:'low',category:'unclear_request',classificationReason:'The request is empty or too vague to safely classify.',implementationPlan:'Ask the user for a clearer dashboard change before creating a deployment or premium request.',notes:'No deployment action created.'};
+  const blocked=dashboardStudioPolicyMatch(lower,[
+    /show|reveal|display|print|expose|send.*(secret|token|api key|password|refresh token|access token)/,
+    /bypass (auth|authentication|approval|permission|security)/,
+    /(delete|remove).*audit log|disable.*audit/,
+    /(drop|truncate|wipe|delete).*(database|table|tenant data)/,
+    /modify.*another tenant|other tenant|all tenants without approval/,
+    /direct production|edit production directly|disable security/
+  ]);
+  if(blocked) return {classification:'blocked',status:'blocked',riskLevel:'critical',category:'blocked_categories',classificationReason:'The request matches a blocked Dashboard Studio safety rule.',implementationPlan:'Do not deploy. Explain the safety issue and log the blocked request.',notes:'Blocked by policy: no secret exposure, auth bypass, destructive data changes, audit-log deletion, cross-tenant modification, or direct production editing.'};
+  const premium=dashboardStudioPolicyMatch(lower,[
+    /new (integration|api|external api|provider|model provider|oauth|webhook|background job|automation category|data source|database|vector store|workflow)/,
+    /(anthropic|claude|openai|outscraper|rocketreach|apollo|hubspot|stripe|quickbooks|plaid|linkedin|facebook|instagram|x\.com|twitter|tiktok|zapier|make\.com).*(connect|connection|integration|api|key|token)/,
+    /(api key|secret|env var|environment variable|railway variable|new variable|credential)/,
+    /(payment|billing|banking|finance|legal|medical|hipaa|compliance)/,
+    /(scrape|scraper|scraping|lead scraping|increase.*volume|more leads|higher limit|cost)/,
+    /(image generation|social posting|post to social|send automatically|auto-send|autonomous outbound)/,
+    /(all tenants|every client|global change|platform-wide|cross-tenant)/
+  ]);
+  if(premium) return {classification:'premium_request',status:'pending',riskLevel:'high',category:'premium_categories',classificationReason:'This request may require a new integration, external API, secret, automation authority, cost, compliance review, or cross-tenant approval.',implementationPlan:'Do not deploy automatically. Create a premium update request for Jessa/admin review, notify admin, and show the premium request message to the user.',notes:DASHBOARD_STUDIO_UPDATE_POLICY.premium_request_message,missingVariables:dashboardStudioMissingVariableChecklist(raw)};
+  const unclear=/(make it better|improve it|fix this|update val|change dashboard|do the thing|make it work)$/i.test(lower)||raw.length<12;
+  if(unclear) return {classification:'needs_clarification',status:'needs_clarification',riskLevel:'low',category:'needs_clarification',classificationReason:'The request is too broad to verify tenant scope, risk, or affected functionality.',implementationPlan:'Ask one clarifying question before classifying as auto-deploy or premium.',notes:'No deployment action created until the user clarifies the requested change.'};
+  const auto=dashboardStudioPolicyMatch(lower,[
+    /(ux|layout|copy|wording|label|button|navigation|color|branding|style|dashboard organization|reorder|hide|show|rename)/,
+    /(prompt|ai behavior|tone|question|response|conversation).*(update|tune|adjust|improve|change)/,
+    /(existing|current).*(email|gmail|calendar|google|crm|ghl|transcript|task|railway status|github status|connection|workflow)/,
+    /(bug|readability|contrast|broken|not readable|status display|progress display|dashboard card|widget)/
+  ]);
+  if(auto) return {classification:'auto_deploy',status:'classified',riskLevel:'low',category:'approved_auto_deploy_categories',classificationReason:'The request appears tenant-scoped and limited to approved UX, copy, layout, prompt tuning, existing workflow, or bug-fix scope.',implementationPlan:'Create a tenant-scoped deployment request. Before any deployment, verify no new secrets, providers, external writes, background jobs, cost increases, schema changes, or cross-tenant changes are required.',notes:'Eligible for auto-deploy only after final preflight confirms no new variables, cost, security, compliance, or cross-tenant risk.',missingVariables:dashboardStudioMissingVariableChecklist(raw)};
+  return {classification:'needs_clarification',status:'needs_clarification',riskLevel:'medium',category:'needs_clarification',classificationReason:'The request did not clearly match approved auto-deploy, premium, or blocked policy categories.',implementationPlan:'Ask for clarification about whether this changes UX/copy/layout only or introduces new capabilities, integrations, data access, cost, or automation authority.',notes:'No deployment action created until classification is safer.'};
+}
+function normalizeDashboardStudioRequest(row){
+  return {
+    id:row.id,
+    tenantId:row.tenant_id||row.tenantId,
+    requestedByUserId:row.requested_by_user_id||row.requestedByUserId,
+    requestText:row.request_text||row.requestText||'',
+    classification:row.classification||'requested',
+    status:row.status||'requested',
+    riskLevel:row.risk_level||row.riskLevel||'low',
+    category:row.category||row.metadata_json?.category||row.metadata?.category||'',
+    classificationReason:row.classification_reason||row.classificationReason||row.metadata_json?.classificationReason||row.metadata?.classificationReason||'',
+    missingVariables:row.missing_variables||row.missingVariables||row.metadata_json?.missingVariables||row.metadata?.missingVariables||[],
+    branchName:row.branch_name||row.branchName||'',
+    prUrl:row.pr_url||row.prUrl||'',
+    prNumber:row.pr_number??row.prNumber??null,
+    implementationPlan:row.implementation_plan||row.implementationPlan||'',
+    errorMessage:row.error_message||row.errorMessage||'',
+    createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',
+    updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''
+  };
+}
+function normalizePremiumUpdateRequest(row){
+  if(!row) return null;
+  return {id:row.id,tenantId:row.tenant_id||row.tenantId,requestedByUserId:row.requested_by_user_id||row.requestedByUserId||'',userName:row.user_name||row.userName||'',userEmail:row.user_email||row.userEmail||'',requestText:row.request_text||row.requestText||'',classificationReason:row.classification_reason||row.classificationReason||'',riskLevel:row.risk_level||row.riskLevel||'high',requestedFunction:row.requested_function||row.requestedFunction||'',status:row.status||'pending',adminNotes:row.admin_notes||row.adminNotes||'',metadata:row.metadata_json||row.metadata||{},createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''};
+}
+function normalizeDeploymentHistory(row){
+  if(!row) return null;
+  return {id:row.id,tenantId:row.tenant_id||row.tenantId,requestId:row.request_id||row.requestId||'',requestType:row.request_type||row.requestType||'',status:row.status||'',classification:row.classification||'',summary:row.summary||'',rollbackReference:row.rollback_reference||row.rollbackReference||'',metadata:row.metadata_json||row.metadata||{},createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''};
+}
+function normalizeTenantDashboardStudioOverride(row){
+  if(!row) return null;
+  const config=row.config_json||row.configJson||row.config||{};
+  const metadata=row.metadata_json||row.metadata||{};
+  return {
+    id:row.id,
+    tenantId:row.tenant_id||row.tenantId,
+    activeDeploymentId:row.active_deployment_id||row.activeDeploymentId||'',
+    config,
+    metadata,
+    createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',
+    updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''
+  };
+}
+function normalizeTenantEnvironmentVariableMetadata(row){
+  if(!row) return null;
+  return {id:row.id,tenantId:row.tenant_id||row.tenantId,variableName:row.variable_name||row.variableName||'',status:row.status||'missing',requiredFor:row.required_for||row.requiredFor||'',adminOnly:row.admin_only??row.adminOnly??true,metadata:row.metadata_json||row.metadata||{},createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''};
+}
+function dashboardStudioSessionArray(key){
+  if(!DEMO_MODE) return null;
+  const state=requestContext.getStore()?.demoState;
+  if(!state) return null;
+  if(!Array.isArray(state[key])) state[key]=[];
+  return state[key];
+}
+async function listDashboardStudioRequests(limit=50){
+  const demoRows=dashboardStudioSessionArray('dashboardChangeRequests');
+  if(demoRows) return demoRows.filter(r=>r.tenantId===tenantId()).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,Math.min(Number(limit)||50,100)).map(normalizeDashboardStudioRequest);
+  await valDbReady;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('select * from dashboard_change_requests where tenant_id=$1 order by created_at desc limit $2',[tenant,Math.min(Number(limit)||50,100)]);
+    return r.rows.map(normalizeDashboardStudioRequest);
+  }
+  return (valStore().dashboardChangeRequests||[]).filter(r=>r.tenantId===tenant).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,Math.min(Number(limit)||50,100)).map(normalizeDashboardStudioRequest);
+}
+async function listPremiumUpdateRequests(limit=50){
+  const demoRows=dashboardStudioSessionArray('premiumUpdateRequests');
+  if(demoRows) return demoRows.filter(r=>r.tenantId===tenantId()).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,Math.min(Number(limit)||50,100)).map(normalizePremiumUpdateRequest);
+  await valDbReady;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('select * from premium_update_requests where tenant_id=$1 order by created_at desc limit $2',[tenant,Math.min(Number(limit)||50,100)]);
+    return r.rows.map(normalizePremiumUpdateRequest);
+  }
+  return (valStore().premiumUpdateRequests||[]).filter(r=>r.tenantId===tenant).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,Math.min(Number(limit)||50,100)).map(normalizePremiumUpdateRequest);
+}
+async function listDeploymentHistory(limit=50){
+  const demoRows=dashboardStudioSessionArray('deploymentHistory');
+  if(demoRows) return demoRows.filter(r=>r.tenantId===tenantId()).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,Math.min(Number(limit)||50,100)).map(normalizeDeploymentHistory);
+  await valDbReady;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('select * from deployment_history where tenant_id=$1 order by created_at desc limit $2',[tenant,Math.min(Number(limit)||50,100)]);
+    return r.rows.map(normalizeDeploymentHistory);
+  }
+  return (valStore().deploymentHistory||[]).filter(r=>r.tenantId===tenant).sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))).slice(0,Math.min(Number(limit)||50,100)).map(normalizeDeploymentHistory);
+}
+async function listTenantEnvironmentVariableMetadata(limit=100){
+  const demoRows=dashboardStudioSessionArray('tenantEnvironmentVariablesMetadata');
+  if(demoRows) return demoRows.filter(r=>r.tenantId===tenantId()).sort((a,b)=>String(a.variableName||'').localeCompare(String(b.variableName||''))).slice(0,Math.min(Number(limit)||100,200)).map(normalizeTenantEnvironmentVariableMetadata);
+  await valDbReady;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('select * from tenant_environment_variables_metadata where tenant_id=$1 order by variable_name asc limit $2',[tenant,Math.min(Number(limit)||100,200)]);
+    return r.rows.map(normalizeTenantEnvironmentVariableMetadata);
+  }
+  return (valStore().tenantEnvironmentVariablesMetadata||[]).filter(r=>r.tenantId===tenant).sort((a,b)=>String(a.variableName||'').localeCompare(String(b.variableName||''))).slice(0,Math.min(Number(limit)||100,200)).map(normalizeTenantEnvironmentVariableMetadata);
+}
+async function createDeploymentHistory({req=null,requestId='',requestType='dashboard_update_request',status='policy_classified',classification='',summary='',rollbackReference='',metadata={}}={}){
+  const row={id:uuid('deployhist'),tenantId:tenantId(),requestId,requestType,status,classification,summary,rollbackReference,metadata:redactSecurityValue(metadata||{}),createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const demoRows=dashboardStudioSessionArray('deploymentHistory');
+  if(demoRows){demoRows.push(row);return normalizeDeploymentHistory(row);}
+  await valDbReady;
+  if(pgPool) await dbQuery('insert into deployment_history (id,tenant_id,request_id,request_type,status,classification,summary,rollback_reference,metadata_json,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),now())',[row.id,row.tenantId,row.requestId,row.requestType,row.status,row.classification,row.summary,row.rollbackReference,JSON.stringify(row.metadata)]);
+  else{const store=valStore();nextStoreArray(store,'deploymentHistory').push(row);saveValStore(store);}
+  await auditLog({req,action:'deployment_history_recorded',resourceType:'deployment_history',resourceId:row.id,metadata:{requestId,status,classification},success:true}).catch(()=>{});
+  return normalizeDeploymentHistory(row);
+}
+async function updateDeploymentHistoryRecord(id,updates={}){
+  if(!id) return null;
+  const demoRows=dashboardStudioSessionArray('deploymentHistory');
+  if(demoRows){
+    const row=demoRows.find(r=>r.id===id&&r.tenantId===tenantId());
+    if(!row) return null;
+    const metadata=updates.metadata?redactSecurityValue(updates.metadata):null;
+    Object.assign(row,Object.fromEntries(Object.entries({status:updates.status,summary:updates.summary,rollbackReference:updates.rollbackReference,metadata:metadata||updates.metadata}).filter(([,v])=>v!==undefined&&v!==null)),{updatedAt:new Date().toISOString()});
+    return normalizeDeploymentHistory(row);
+  }
+  await valDbReady;
+  const tenant=tenantId();
+  const metadata=updates.metadata?redactSecurityValue(updates.metadata):null;
+  if(pgPool){
+    const r=await dbQuery(`update deployment_history set status=coalesce($1,status), summary=coalesce($2,summary), rollback_reference=coalesce($3,rollback_reference), metadata_json=coalesce($4::jsonb,metadata_json), updated_at=now() where id=$5 and tenant_id=$6 returning *`,[updates.status||null,updates.summary||null,updates.rollbackReference||null,metadata?JSON.stringify(metadata):null,id,tenant]);
+    return r.rows[0]?normalizeDeploymentHistory(r.rows[0]):null;
+  }
+  const store=valStore(),row=nextStoreArray(store,'deploymentHistory').find(r=>r.id===id&&r.tenantId===tenant);
+  if(!row) return null;
+  Object.assign(row,Object.fromEntries(Object.entries({status:updates.status,summary:updates.summary,rollbackReference:updates.rollbackReference,metadata:metadata||updates.metadata}).filter(([,v])=>v!==undefined&&v!==null)),{updatedAt:new Date().toISOString()});
+  saveValStore(store);
+  return normalizeDeploymentHistory(row);
+}
+async function getTenantDashboardStudioOverride(){
+  const demoRows=dashboardStudioSessionArray('tenantDashboardStudioOverrides');
+  if(demoRows) return normalizeTenantDashboardStudioOverride(demoRows.find(r=>r.tenantId===tenantId()));
+  await valDbReady;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('select * from tenant_dashboard_studio_overrides where tenant_id=$1 limit 1',[tenant]);
+    return normalizeTenantDashboardStudioOverride(r.rows[0]);
+  }
+  return normalizeTenantDashboardStudioOverride((valStore().tenantDashboardStudioOverrides||[]).find(r=>r.tenantId===tenant));
+}
+async function saveTenantDashboardStudioOverride({config={},activeDeploymentId='',metadata={}}={}){
+  const tenant=tenantId();
+  const cleanConfig=redactSecurityValue(config||{});
+  const cleanMetadata=redactSecurityValue(metadata||{});
+  const demoRows=dashboardStudioSessionArray('tenantDashboardStudioOverrides');
+  if(demoRows){
+    let row=demoRows.find(r=>r.tenantId===tenant);
+    if(!row){row={id:uuid('dashoverride'),tenantId:tenant,createdAt:new Date().toISOString()};demoRows.push(row);}
+    Object.assign(row,{activeDeploymentId,config:cleanConfig,metadata:cleanMetadata,updatedAt:new Date().toISOString()});
+    return normalizeTenantDashboardStudioOverride(row);
+  }
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery(`insert into tenant_dashboard_studio_overrides (id,tenant_id,active_deployment_id,config_json,metadata_json,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,now(),now())
+      on conflict (tenant_id) do update set active_deployment_id=excluded.active_deployment_id, config_json=excluded.config_json, metadata_json=excluded.metadata_json, updated_at=now()
+      returning *`,[uuid('dashoverride'),tenant,activeDeploymentId,JSON.stringify(cleanConfig),JSON.stringify(cleanMetadata)]);
+    return normalizeTenantDashboardStudioOverride(r.rows[0]);
+  }
+  const store=valStore(),rows=nextStoreArray(store,'tenantDashboardStudioOverrides');
+  let row=rows.find(r=>r.tenantId===tenant);
+  if(!row){row={id:uuid('dashoverride'),tenantId:tenant,createdAt:new Date().toISOString()};rows.push(row);}
+  Object.assign(row,{activeDeploymentId,config:cleanConfig,metadata:cleanMetadata,updatedAt:new Date().toISOString()});
+  saveValStore(store);
+  return normalizeTenantDashboardStudioOverride(row);
+}
+async function tenantDashboardStudioDeploymentStatus(){
+  const activeOverride=await getTenantDashboardStudioOverride();
+  const history=await listDeploymentHistory(30);
+  const activeDeployment=activeOverride?.activeDeploymentId?history.find(h=>h.id===activeOverride.activeDeploymentId):null;
+  return {
+    tenantId:tenantId(),
+    activeOverride:activeOverride?{activeDeploymentId:activeOverride.activeDeploymentId,config:activeOverride.config,metadata:activeOverride.metadata,updatedAt:activeOverride.updatedAt,canRollback:activeDeployment?.requestType==='dashboard_studio_safe_auto_deploy'&&activeDeployment?.status==='deployed',rollbackDeploymentId:activeDeployment?.id||''}:null,
+    latestDeployment:history.find(h=>h.status==='deployed'||h.status==='rolled_back')||history[0]||null,
+    history
+  };
+}
+async function upsertTenantVariableMetadata({name,requiredFor='',status='missing_or_unverified',metadata={}}={}){
+  const variableName=String(name||'').trim().toUpperCase();
+  if(!variableName) return null;
+  const tenant=tenantId();
+  const demoRows=dashboardStudioSessionArray('tenantEnvironmentVariablesMetadata');
+  if(demoRows){
+    let row=demoRows.find(r=>r.tenantId===tenant&&r.variableName===variableName);
+    if(!row){row={id:uuid('envmeta'),tenantId:tenant,variableName,createdAt:new Date().toISOString()};demoRows.push(row);}
+    Object.assign(row,{status,requiredFor,adminOnly:true,metadata:redactSecurityValue(metadata||{}),updatedAt:new Date().toISOString()});
+    return normalizeTenantEnvironmentVariableMetadata(row);
+  }
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery(`insert into tenant_environment_variables_metadata (id,tenant_id,variable_name,status,required_for,admin_only,metadata_json,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,true,$6,now(),now())
+      on conflict (tenant_id,variable_name) do update set status=excluded.status, required_for=excluded.required_for, metadata_json=excluded.metadata_json, updated_at=now()
+      returning *`,[uuid('envmeta'),tenant,variableName,status,requiredFor,JSON.stringify(redactSecurityValue(metadata||{}))]);
+    return normalizeTenantEnvironmentVariableMetadata(r.rows[0]);
+  }
+  const store=valStore(),rows=nextStoreArray(store,'tenantEnvironmentVariablesMetadata');
+  let row=rows.find(r=>r.tenantId===tenant&&r.variableName===variableName);
+  if(!row){row={id:uuid('envmeta'),tenantId:tenant,variableName,createdAt:new Date().toISOString()};rows.push(row);}
+  Object.assign(row,{status,requiredFor,adminOnly:true,metadata:redactSecurityValue(metadata||{}),updatedAt:new Date().toISOString()});
+  saveValStore(store);
+  return normalizeTenantEnvironmentVariableMetadata(row);
+}
+function dashboardStudioRequestedFunction(result,requestText){
+  const lower=String(requestText||'').toLowerCase();
+  const found=(lower.match(/\b(openai|anthropic|claude|outscraper|rocketreach|apollo|hubspot|stripe|quickbooks|plaid|linkedin|facebook|instagram|zapier|gmail|calendar|ghl|crm|webhook|oauth|scraper|social posting|image generation)\b/i)||[])[0];
+  return found||result.category||result.classification||'dashboard_update';
+}
+async function notifyAdminPremiumUpdateRequest(req,row){
+  await auditLog({req,action:'premium_update_admin_notification_created',resourceType:'premium_update_request',resourceId:row.id,metadata:{riskLevel:row.riskLevel,requestedFunction:row.requestedFunction},success:true}).catch(()=>{});
+  return {ok:true,channel:'dashboard_notification',message:'Premium update request queued for Jessa/admin review.'};
+}
+async function createPremiumUpdateRequest(req,requestText,result){
+  const user=req?.valUser||{};
+  const row={id:uuid('premium'),tenantId:tenantId(),requestedByUserId:currentUserId(),userName:user.name||'',userEmail:user.email||'',requestText:String(requestText||'').trim(),classificationReason:result.classificationReason||result.notes||'',riskLevel:result.riskLevel||'high',requestedFunction:dashboardStudioRequestedFunction(result,requestText),status:'pending',adminNotes:'',metadata:{category:result.category,missingVariables:result.missingVariables||[],policy:DASHBOARD_STUDIO_UPDATE_POLICY.premium_categories},createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const demoRows=dashboardStudioSessionArray('premiumUpdateRequests');
+  if(demoRows){
+    demoRows.push(row);
+    for(const item of (result.missingVariables||[])) await upsertTenantVariableMetadata({name:item.name,requiredFor:row.id,status:item.status||'missing_or_unverified',metadata:{source:'premium_update_request'}}).catch(()=>{});
+    return normalizePremiumUpdateRequest(row);
+  }
+  await valDbReady;
+  if(pgPool) await dbQuery('insert into premium_update_requests (id,tenant_id,requested_by_user_id,user_name,user_email,request_text,classification_reason,risk_level,requested_function,status,admin_notes,metadata_json,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),now())',[row.id,row.tenantId,row.requestedByUserId,row.userName,row.userEmail,row.requestText,row.classificationReason,row.riskLevel,row.requestedFunction,row.status,row.adminNotes,JSON.stringify(row.metadata)]);
+  else{const store=valStore();nextStoreArray(store,'premiumUpdateRequests').push(row);saveValStore(store);}
+  for(const item of (result.missingVariables||[])) await upsertTenantVariableMetadata({name:item.name,requiredFor:row.id,status:item.status||'missing_or_unverified',metadata:{source:'premium_update_request'}}).catch(()=>{});
+  await auditLog({req,action:'premium_update_request_created',resourceType:'premium_update_request',resourceId:row.id,metadata:{riskLevel:row.riskLevel,requestedFunction:row.requestedFunction},success:true}).catch(()=>{});
+  await notifyAdminPremiumUpdateRequest(req,row);
+  return normalizePremiumUpdateRequest(row);
+}
+function enforceDashboardStudioTenantOnly(request){
+  if(!request) throw new Error('Dashboard Studio request not found.');
+  if(request.tenantId!==tenantId()) throw new Error('Dashboard Studio deployment blocked: request belongs to another tenant.');
+  const text=String(request.requestText||'').toLowerCase();
+  if(/(all tenants|every client|global change|platform-wide|cross-tenant|another tenant|other tenant)/.test(text)){
+    throw new Error('Dashboard Studio deployment blocked: this appears to affect more than the current tenant.');
+  }
+  return true;
+}
+function dashboardStudioSafeOverridePatch(request){
+  const text=String(request?.requestText||'').trim();
+  const lower=text.toLowerCase();
+  const patch={
+    dashboardStudio:{
+      version:1,
+      lastAppliedRequestId:request.id,
+      lastAppliedAt:new Date().toISOString(),
+      lastAppliedSummary:text.slice(0,500)
+    }
+  };
+  const quoted=[...text.matchAll(/[“"]([^”"]{3,120})[”"]/g)].map(m=>m[1].trim()).filter(Boolean);
+  if(/\b(title|headline|hero)\b/.test(lower)&&quoted[0]) patch.dashboard={...(patch.dashboard||{}),heroTitle:quoted[0]};
+  if(/\b(subtitle|subhead|description|tagline)\b/.test(lower)&&quoted[1]) patch.dashboard={...(patch.dashboard||{}),heroSubtitle:quoted[1]};
+  const rename=text.match(/\brename\s+(.{2,60}?)\s+to\s+[“"]?(.{2,80}?)[”"]?(?:\.|$)/i);
+  if(rename) patch.labels={[rename[1].trim().slice(0,60)]:rename[2].trim().slice(0,80)};
+  if(/\b(michele|book|chapter|manuscript|editor|rewrite|question|voice)\b/i.test(text)){
+    patch.micheleEditor={
+      ...(patch.micheleEditor||{}),
+      chapterAwarenessDefault:/read|chapter|context|overview/.test(lower),
+      applyLayeredEditorialFramework:/humor|scene|sensory|emotional|truth|transition|reader/.test(lower),
+      singleQuestionMode:/question|ask|conversation|back and forth/.test(lower),
+      avoidEitherOrChoices:/either\/or|rather|all of them|all four|all five|choose between/.test(lower)
+    };
+  }
+  return patch;
+}
+function mergeDashboardStudioOverride(currentConfig,patch){
+  const base=currentConfig&&typeof currentConfig==='object'?currentConfig:{};
+  const out={...base};
+  for(const [key,value] of Object.entries(patch||{})){
+    if(value&&typeof value==='object'&&!Array.isArray(value)) out[key]={...(out[key]&&typeof out[key]==='object'?out[key]:{}),...value};
+    else out[key]=value;
+  }
+  return out;
+}
+function dashboardStudioDeploymentPreflight(request){
+  enforceDashboardStudioTenantOnly(request);
+  if(request.classification!=='auto_deploy') throw new Error('Dashboard Studio deployment blocked: only auto-deploy requests can use the safe deployment path.');
+  if(!['approved_for_deployment','approved'].includes(String(request.status||''))) throw new Error('Dashboard Studio deployment blocked: Jessa approval is required first.');
+  const recheck=classifyDashboardStudioRequest(request.requestText);
+  if(recheck.classification!=='auto_deploy') throw new Error('Dashboard Studio deployment blocked: request no longer passes the auto-deploy policy.');
+  if((recheck.missingVariables||[]).length) throw new Error('Dashboard Studio deployment blocked: new variables or secrets require admin setup.');
+  const patch=dashboardStudioSafeOverridePatch(request);
+  const allowedKeys=['dashboardStudio','dashboard','labels','micheleEditor'];
+  const badKeys=Object.keys(patch).filter(k=>!allowedKeys.includes(k));
+  if(badKeys.length) throw new Error('Dashboard Studio deployment blocked: unsafe override keys were generated.');
+  return {ok:true,patch,preflight:{tenantOnly:true,noSecrets:true,noExternalWrites:true,noSchemaChanges:true,noCrossTenantChanges:true,allowedKeys}};
+}
+async function executeDashboardStudioSafeDeploy(req,request){
+  const preflight=dashboardStudioDeploymentPreflight(request);
+  const previous=await getTenantDashboardStudioOverride();
+  const previousConfig=previous?.config||{};
+  const nextConfig=mergeDashboardStudioOverride(previousConfig,preflight.patch);
+  const deployment=await createDeploymentHistory({
+    req,
+    requestId:request.id,
+    requestType:'dashboard_studio_safe_auto_deploy',
+    status:'deploying',
+    classification:request.classification,
+    summary:'Safe tenant-only Dashboard Studio deployment started.',
+    rollbackReference:previous?.activeDeploymentId||previous?.id||'empty_override',
+    metadata:{preflight:preflight.preflight,patch:preflight.patch,previousOverride:previousConfig}
+  });
+  try{
+    const active=await saveTenantDashboardStudioOverride({config:nextConfig,activeDeploymentId:deployment.id,metadata:{requestId:request.id,deployedAt:new Date().toISOString(),deploymentId:deployment.id}});
+    await updateDashboardStudioRequest(request.id,{status:'deployed',implementationPlan:`${request.implementationPlan}\n\nSafe tenant-only deployment completed. Rollback is available from Dashboard Studio deployment status.`,errorMessage:''});
+    const final=await updateDeploymentHistoryRecord(deployment.id,{status:'deployed',summary:'Safe tenant-only Dashboard Studio override deployed. No code, secrets, schemas, or other tenants were changed.',metadata:{preflight:preflight.preflight,patch:preflight.patch,previousOverride:previousConfig,activeOverride:active.config}});
+    await auditLog({req,action:'dashboard_studio_safe_deployed',resourceType:'dashboard_studio_deployment',resourceId:deployment.id,metadata:{requestId:request.id,tenantOnly:true},success:true}).catch(()=>{});
+    return final;
+  }catch(e){
+    await updateDeploymentHistoryRecord(deployment.id,{status:'failed',summary:'Safe Dashboard Studio deployment failed before activation.',metadata:{error:e.message,preflight:preflight.preflight,previousOverride:previousConfig}}).catch(()=>{});
+    await auditLog({req,action:'dashboard_studio_safe_deploy_failed',resourceType:'dashboard_studio_deployment',resourceId:deployment.id,metadata:{requestId:request.id,error:e.message},success:false}).catch(()=>{});
+    throw e;
+  }
+}
+async function rollbackDashboardStudioDeployment(req,{deploymentId='' }={}){
+  const history=await listDeploymentHistory(100);
+  const target=history.find(h=>h.id===deploymentId&&h.tenantId===tenantId());
+  if(!target) throw new Error('Deployment record not found for this tenant.');
+  if(target.requestType!=='dashboard_studio_safe_auto_deploy') throw new Error('Only safe Dashboard Studio deployments can be rolled back here.');
+  const previousOverride=target.metadata?.previousOverride||{};
+  const active=await getTenantDashboardStudioOverride();
+  if(active?.activeDeploymentId&&active.activeDeploymentId!==target.id) throw new Error('Rollback blocked: this is not the active Dashboard Studio deployment.');
+  const rollback=await createDeploymentHistory({
+    req,
+    requestId:target.requestId,
+    requestType:'dashboard_studio_rollback',
+    status:'rolling_back',
+    classification:target.classification,
+    summary:'Rollback started for safe Dashboard Studio deployment.',
+    rollbackReference:target.id,
+    metadata:{restoringPreviousOverride:previousOverride}
+  });
+  const restored=await saveTenantDashboardStudioOverride({config:previousOverride,activeDeploymentId:rollback.id,metadata:{rolledBackDeploymentId:target.id,rollbackDeploymentId:rollback.id,rolledBackAt:new Date().toISOString()}});
+  await updateDeploymentHistoryRecord(target.id,{status:'rolled_back',summary:'Safe Dashboard Studio deployment was rolled back.'});
+  const final=await updateDeploymentHistoryRecord(rollback.id,{status:'rolled_back',summary:'Previous tenant Dashboard Studio override restored.',metadata:{rolledBackDeploymentId:target.id,activeOverride:restored.config}});
+  await auditLog({req,action:'dashboard_studio_safe_rolled_back',resourceType:'dashboard_studio_deployment',resourceId:target.id,metadata:{rollbackId:rollback.id},success:true}).catch(()=>{});
+  return final;
+}
+async function createDashboardStudioRequest(req,requestText){
+  const result=classifyDashboardStudioRequest(requestText);
+  const row={id:uuid('dashreq'),tenantId:tenantId(),requestedByUserId:currentUserId(),requestText:String(requestText||'').trim(),classification:result.classification,status:result.status,riskLevel:result.riskLevel,category:result.category||'',classificationReason:result.classificationReason||'',missingVariables:result.missingVariables||[],branchName:'',prUrl:'',prNumber:null,implementationPlan:result.implementationPlan,errorMessage:result.notes||result.classificationReason||'',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  const demoRows=dashboardStudioSessionArray('dashboardChangeRequests');
+  if(demoRows) demoRows.push(row);
+  else{
+  await valDbReady;
+  if(pgPool){
+    await dbQuery('insert into dashboard_change_requests (id,tenant_id,requested_by_user_id,request_text,classification,status,risk_level,branch_name,pr_url,pr_number,implementation_plan,error_message,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now(),now())',[row.id,row.tenantId,row.requestedByUserId,row.requestText,row.classification,row.status,row.riskLevel,row.branchName,row.prUrl,row.prNumber,row.implementationPlan,row.errorMessage]);
+  }else{
+    const store=valStore();nextStoreArray(store,'dashboardChangeRequests').push(row);saveValStore(store);
+  }
+  }
+  await auditLog({req,action:'dashboard_change_requested',resourceType:'dashboard_studio_request',resourceId:row.id,metadata:{classification:row.classification,status:row.status},success:true}).catch(()=>{});
+  await auditLog({req,action:'dashboard_change_classified',resourceType:'dashboard_studio_request',resourceId:row.id,metadata:{classification:row.classification,riskLevel:row.riskLevel,category:row.category,reason:row.classificationReason},success:true}).catch(()=>{});
+  let premiumRequest=null,deploymentHistory=null;
+  if(row.classification==='blocked') await auditLog({req,action:'dashboard_change_blocked',resourceType:'dashboard_studio_request',resourceId:row.id,metadata:{reason:row.errorMessage},success:false}).catch(()=>{});
+  if(row.classification==='premium_request') premiumRequest=await createPremiumUpdateRequest(req,requestText,result);
+  if(row.classification==='auto_deploy'){
+    for(const item of (result.missingVariables||[])) await upsertTenantVariableMetadata({name:item.name,requiredFor:row.id,status:item.status||'missing_or_unverified',metadata:{source:'dashboard_studio_auto_deploy_preflight'}}).catch(()=>{});
+    deploymentHistory=await createDeploymentHistory({req,requestId:row.id,requestType:'dashboard_update_request',status:'preflight_required',classification:row.classification,summary:'Auto-deploy policy match recorded. Deployment is held until preflight confirms tenant scope, rollback path, and no new variables/cost/security risk.',metadata:{riskLevel:row.riskLevel,category:row.category,classificationReason:row.classificationReason}});
+  }
+  return Object.assign(normalizeDashboardStudioRequest(row),{premiumRequest,deploymentHistory,userMessage:premiumRequest?DASHBOARD_STUDIO_UPDATE_POLICY.premium_request_message:''});
+}
+async function updateDashboardStudioRequest(id,updates){
+  const demoRows=dashboardStudioSessionArray('dashboardChangeRequests');
+  if(demoRows){
+    const row=demoRows.find(r=>r.id===id&&r.tenantId===tenantId());
+    if(!row) return null;
+    Object.assign(row,updates,{updatedAt:new Date().toISOString()});
+    return normalizeDashboardStudioRequest(row);
+  }
+  await valDbReady;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery(`update dashboard_change_requests set status=coalesce($1,status), implementation_plan=coalesce($2,implementation_plan), error_message=coalesce($3,error_message), branch_name=coalesce($4,branch_name), pr_url=coalesce($5,pr_url), pr_number=coalesce($6,pr_number), updated_at=now() where id=$7 and tenant_id=$8 returning *`,[updates.status||null,updates.implementationPlan||null,updates.errorMessage||null,updates.branchName||null,updates.prUrl||null,updates.prNumber??null,id,tenant]);
+    return r.rows[0]?normalizeDashboardStudioRequest(r.rows[0]):null;
+  }
+  const store=valStore(),row=nextStoreArray(store,'dashboardChangeRequests').find(r=>r.id===id&&r.tenantId===tenant);
+  if(!row) return null;
+  Object.assign(row,updates,{updatedAt:new Date().toISOString()});
+  saveValStore(store);
+  return normalizeDashboardStudioRequest(row);
+}
+async function approveDashboardStudioRequest(req,{id='',phrase='' }={}){
+  if(!dashboardStudioApprovalPhrase(phrase)) throw new Error('Approval phrase must be exactly “Jessa says deploy.”');
+  const requests=await listDashboardStudioRequests(100);
+  const target=id?requests.find(r=>r.id===id):requests.find(r=>!['blocked','approved','rejected','config_applied','pr_created'].includes(String(r.status||'')));
+  if(!target) throw new Error('No pending Dashboard Studio request is ready for approval.');
+  if(target.classification==='blocked_change'||target.status==='blocked'){
+    await auditLog({req,action:'dashboard_change_rejected',resourceType:'dashboard_studio_request',resourceId:target.id,metadata:{reason:'blocked_change',approvalPhrase:'Jessa says deploy'},success:false}).catch(()=>{});
+    throw new Error('This change requires developer review outside Dashboard Studio.');
+  }
+  if(target.classification==='premium_request'){
+    await auditLog({req,action:'dashboard_change_premium_approval_redirected',resourceType:'dashboard_studio_request',resourceId:target.id,metadata:{approvalPhrase:'Jessa says deploy'},success:false}).catch(()=>{});
+    throw new Error('This is a premium update request and must be reviewed in the admin premium queue.');
+  }
+  const isAuto=target.classification==='auto_deploy';
+  const status=isAuto?'approved_for_deployment':'approved';
+  const plan=isAuto
+    ? `${target.implementationPlan}\n\nApproved with phrase “Jessa says deploy.” Next step: deployment preflight verifies tenant-only scope, tests, rollback, and no new secrets/cost/compliance risk before any implementation.`
+    : `${target.implementationPlan}\n\nApproved with phrase “Jessa says deploy.” Next step: admin/developer review; auto-merge and production-wide deploy remain disabled.`;
+  let updated=await updateDashboardStudioRequest(target.id,{status,implementationPlan:plan,errorMessage:isAuto?'Safe deployment preflight is running.':''});
+  await auditLog({req,action:'dashboard_change_approved',resourceType:'dashboard_studio_request',resourceId:target.id,metadata:{approvalPhrase:'Jessa says deploy',classification:target.classification,status},success:true}).catch(()=>{});
+  if(isAuto){
+    try{
+      const deployment=await executeDashboardStudioSafeDeploy(req,updated);
+      updated=await updateDashboardStudioRequest(target.id,{status:'deployed',errorMessage:'',implementationPlan:`${plan}\n\nDeployment status: deployed tenant-only override ${deployment.id}.`});
+    }catch(e){
+      await updateDashboardStudioRequest(target.id,{status:'deployment_failed',errorMessage:e.message}).catch(()=>{});
+      throw e;
+    }
+  }
+  return updated;
+}
+async function reviewPremiumUpdateRequest(req,{id,status,adminNotes=''}){
+  const cleanStatus=String(status||'').trim().toLowerCase();
+  if(!['approved','rejected','needs_more_information','paid_upgrade','converted_to_codex_task'].includes(cleanStatus)) throw new Error('Invalid premium review status.');
+  const tenant=tenantId();
+  const demoRows=dashboardStudioSessionArray('premiumUpdateRequests');
+  if(demoRows){
+    const target=demoRows.find(r=>r.id===id&&r.tenantId===tenant);
+    if(!target) throw new Error('Premium update request not found.');
+    target.status=cleanStatus;target.adminNotes=adminNotes||'';target.updatedAt=new Date().toISOString();
+    return normalizePremiumUpdateRequest(target);
+  }
+  await valDbReady;
+  let row=null;
+  if(pgPool){
+    const r=await dbQuery('update premium_update_requests set status=$1,admin_notes=$2,updated_at=now() where id=$3 and tenant_id=$4 returning *',[cleanStatus,adminNotes||'',id,tenant]);
+    row=normalizePremiumUpdateRequest(r.rows[0]);
+  }else{
+    const store=valStore(),target=nextStoreArray(store,'premiumUpdateRequests').find(r=>r.id===id&&r.tenantId===tenant);
+    if(target){target.status=cleanStatus;target.adminNotes=adminNotes||'';target.updatedAt=new Date().toISOString();saveValStore(store);row=normalizePremiumUpdateRequest(target);}
+  }
+  if(!row) throw new Error('Premium update request not found.');
+  await auditLog({req,action:'premium_update_request_reviewed',resourceType:'premium_update_request',resourceId:row.id,metadata:{status:cleanStatus,adminNotes},success:true}).catch(()=>{});
+  if(cleanStatus==='approved'||cleanStatus==='converted_to_codex_task') await createDeploymentHistory({req,requestId:row.id,requestType:'premium_update_request',status:cleanStatus==='approved'?'premium_approved':'converted_to_codex_task',classification:'premium_request',summary:'Premium update reviewed by admin. Implementation requires explicit scoped build/deployment task.',metadata:{requestedFunction:row.requestedFunction,riskLevel:row.riskLevel}}).catch(()=>{});
+  return row;
 }
 function publicUser(user){
   if(!user) return null;
@@ -1247,10 +1879,8 @@ function transcriptWebhookInfo(req){
     clientSlug:CLIENT_CONFIG.clientSlug,
     method:'POST',
     url:`${base}/api/val/transcripts?token=${encodeURIComponent(token)}`,
-    headerUrl:`${base}/api/val/transcripts`,
     pingUrl:`${base}/api/val/transcripts/ping?token=${encodeURIComponent(token)}`,
-    headerName:'X-VAL-Transcript-Token',
-    headerToken:token,
+    authentication:'Signed webhook URL',
     contentType:'application/json',
     processDefault:true,
     recent30DaysCount:0,
@@ -1270,7 +1900,7 @@ function transcriptWebhookInfo(req){
   };
 }
 function encryptionKeyBuffer(){
-  const raw=String(process.env.ENCRYPTION_KEY||'').trim();
+  const raw=firstEnvValue(['ENCRYPTION_KEY','VAL_ENCRYPTION_KEY','ENCRYPTION_SECRET','encryption_key','ENCRIPTION_KEY','encription_key']);
   if(!raw) return null;
   if(/^[a-f0-9]{64}$/i.test(raw)) return Buffer.from(raw,'hex');
   try{
@@ -1278,6 +1908,9 @@ function encryptionKeyBuffer(){
     if(b.length===32) return b;
   }catch(e){}
   return crypto.createHash('sha256').update(raw).digest();
+}
+function encryptionConfigured(){
+  return !!encryptionKeyBuffer();
 }
 function encryptSecret(value){
   const key=encryptionKeyBuffer();
@@ -1301,6 +1934,43 @@ function maskSecret(value){
   if(!v) return '';
   if(v.length<=8) return '••••';
   return `${v.slice(0,Math.min(4,v.length-4))}...${v.slice(-4)}`;
+}
+const OAUTH_SECRET_FIELDS=['access_token','refresh_token','id_token'];
+function encryptOAuthTokens(tokens){
+  const copy={...(tokens||{})};
+  for(const field of OAUTH_SECRET_FIELDS){
+    if(typeof copy[field]==='string'&&copy[field]){
+      if(!encryptionConfigured()){
+        if(IS_PRODUCTION) throw new Error('ENCRYPTION_KEY is required to save OAuth tokens in production');
+        console.warn('ENCRYPTION_KEY missing; storing OAuth token without encryption in non-production.');
+        continue;
+      }
+      copy[field]={encrypted:true,value:encryptSecret(copy[field])};
+    }
+  }
+  copy.secret_storage=encryptionConfigured()?'encrypted':'legacy_plaintext';
+  return copy;
+}
+function decryptOAuthTokens(tokens){
+  const copy={...(tokens||{})};
+  for(const field of OAUTH_SECRET_FIELDS){
+    if(copy[field]&&typeof copy[field]==='object'&&copy[field].encrypted){
+      copy[field]=decryptSecret(copy[field].value);
+    }
+  }
+  return copy;
+}
+function publicOAuthTokens(tokens){
+  const t=tokens||{};
+  return {
+    scope:t.scope||'',
+    issued_at:t.issued_at||0,
+    expires_in:t.expires_in||0,
+    token_type:t.token_type||'',
+    hasAccessToken:!!t.access_token,
+    hasRefreshToken:!!t.refresh_token,
+    secretStorage:t.secret_storage||(/object/.test(typeof t.refresh_token)?'encrypted':'legacy_plaintext')
+  };
 }
 function normalizeCredentialRow(row){
   if(!row) return null;
@@ -1390,6 +2060,9 @@ async function getIntegrationCredential(provider,credentialType,userId=currentVa
     [0] || null;
 }
 async function resolveIntegrationSecret(provider,credentialType,fallback=''){
+  if(String(credentialType||'')==='api_key'&&tenantApiKeyProvider(provider)){
+    return resolveTenantApiKey(provider,{fallback,allowPlatformFallback:platformKeyFallbackAllowed(provider),sourceLabel:'resolveIntegrationSecret'});
+  }
   const row=await getIntegrationCredential(provider,credentialType);
   if(row?.encrypted_value||row?.encryptedValue){
     try{return decryptSecret(row.encrypted_value||row.encryptedValue);}
@@ -1397,9 +2070,10 @@ async function resolveIntegrationSecret(provider,credentialType,fallback=''){
       console.error(`Credential read failed for ${provider}/${credentialType}:`,e.message);
     }
   }
-  return fallback || '';
+  return String(credentialType||'')==='api_key' ? (platformKeyFallbackAllowed() ? (fallback || '') : '') : (fallback || '');
 }
 async function resolveOpenAIKey(){ return resolveIntegrationSecret('openai','api_key',OPENAI_KEY); }
+async function resolveAnthropicKey(){ return resolveIntegrationSecret('anthropic','api_key',ANTHROPIC_KEY); }
 async function resolveOpenAIModel(){
   return resolveIntegrationSecret('openai','preferred_model',OPENAI_CHAT_MODEL);
 }
@@ -1421,15 +2095,185 @@ async function markCredentialStatus(provider,status){
   });
   saveValStore(store);
 }
-async function createSession(userId){
+function normalizeTenantApiKeyRow(row){
+  if(!row) return null;
+  return {id:row.id,tenantId:row.tenant_id||row.tenantId,provider:row.provider,keyPreview:row.key_preview||row.keyPreview||'',status:row.status||'missing',lastTestedAt:row.last_tested_at?.toISOString?.()||row.last_tested_at||row.lastTestedAt||'',lastUpdatedAt:row.last_updated_at?.toISOString?.()||row.last_updated_at||row.lastUpdatedAt||row.updatedAt||'',createdByUserId:row.created_by_user_id||row.createdByUserId||'',updatedByUserId:row.updated_by_user_id||row.updatedByUserId||'',metadata:row.metadata_json||row.metadata||{},createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''};
+}
+function normalizeTenantProviderApproval(row){
+  if(!row) return null;
+  return {id:row.id,tenantId:row.tenant_id||row.tenantId,provider:row.provider,status:row.status||'missing',approvedByUserId:row.approved_by_user_id||row.approvedByUserId||'',notes:row.notes||'',metadata:row.metadata_json||row.metadata||{},createdAt:row.created_at?.toISOString?.()||row.created_at||row.createdAt||'',updatedAt:row.updated_at?.toISOString?.()||row.updated_at||row.updatedAt||''};
+}
+async function tenantProviderApproval(provider){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) return {approved:false,status:'unsupported',reason:'Unsupported provider'};
+  if(!p.enabledGlobally) return {approved:false,status:'disabled',reason:'Provider is disabled globally'};
+  const tenant=tenantId();
+  let explicit=null;
+  if(pgPool){
+    const r=await dbQuery('select * from tenant_provider_approvals where tenant_id=$1 and provider=$2 limit 1',[tenant,p.providerId]);
+    explicit=normalizeTenantProviderApproval(r.rows[0]);
+  }else{
+    explicit=normalizeTenantProviderApproval((valStore().tenantProviderApprovals||[]).find(r=>r.tenantId===tenant&&r.provider===p.providerId));
+  }
+  if(explicit) return {approved:explicit.status==='approved',status:explicit.status,approval:explicit,reason:explicit.notes||''};
+  return {approved:!!p.defaultTenantAvailability,status:p.defaultTenantAvailability?'approved_by_default':'missing_approval',approval:null,reason:p.defaultTenantAvailability?'Default tenant availability':'Requires admin approval'};
+}
+async function approveTenantProvider(req,{provider,status='approved',notes=''}){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) throw new Error('Unsupported provider');
+  const cleanStatus=String(status||'approved').trim().toLowerCase();
+  if(!['approved','disabled','missing_approval'].includes(cleanStatus)) throw new Error('Invalid provider approval status');
+  const tenant=tenantId(), userId=currentUserId();
+  const row={id:uuid('providerapproval'),tenantId:tenant,provider:p.providerId,status:cleanStatus,approvedByUserId:userId,notes:String(notes||''),metadata:{displayName:p.displayName,costRiskCategory:p.costRiskCategory},createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery(`insert into tenant_provider_approvals (id,tenant_id,provider,status,approved_by_user_id,notes,metadata_json,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,$6,$7,now(),now())
+      on conflict (tenant_id,provider) do update set status=excluded.status, approved_by_user_id=excluded.approved_by_user_id, notes=excluded.notes, metadata_json=excluded.metadata_json, updated_at=now()
+      returning *`,[row.id,tenant,p.providerId,cleanStatus,userId,row.notes,JSON.stringify(row.metadata)]);
+    await auditLog({req,action:'tenant_provider_approval_updated',resourceType:'tenant_provider',resourceId:p.providerId,metadata:{status:cleanStatus},success:true}).catch(()=>{});
+    return normalizeTenantProviderApproval(r.rows[0]);
+  }
+  const store=valStore(),rows=nextStoreArray(store,'tenantProviderApprovals');
+  let existing=rows.find(r=>r.tenantId===tenant&&r.provider===p.providerId);
+  if(!existing){existing=row;rows.push(existing);}else Object.assign(existing,row,{id:existing.id,createdAt:existing.createdAt});
+  saveValStore(store);
+  await auditLog({req,action:'tenant_provider_approval_updated',resourceType:'tenant_provider',resourceId:p.providerId,metadata:{status:cleanStatus},success:true}).catch(()=>{});
+  return normalizeTenantProviderApproval(existing);
+}
+async function getTenantApiKeyRow(provider){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) return null;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('select * from tenant_api_keys where tenant_id=$1 and provider=$2 limit 1',[tenant,p.providerId]);
+    return r.rows[0]||null;
+  }
+  return (valStore().tenantApiKeys||[]).find(r=>r.tenantId===tenant&&r.provider===p.providerId)||null;
+}
+async function getTenantApiKeySecret(provider){
+  const row=await getTenantApiKeyRow(provider);
+  const encrypted=row?.encrypted_secret||row?.encryptedSecret;
+  if(!encrypted) return '';
+  return decryptSecret(encrypted);
+}
+async function saveTenantApiKey(req,{provider,apiKey,metadata={}}){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) throw new Error('Unsupported provider');
+  const approval=await tenantProviderApproval(p.providerId);
+  if(!approval.approved) throw new Error('This connection requires approval before it can be added to your VAL.');
+  if(!encryptionConfigured()) throw new Error('ENCRYPTION_KEY is required to save tenant API keys.');
+  const secret=String(apiKey||'').trim();
+  if(!secret) throw new Error(`Your ${p.displayName} key is not connected yet. Add it in API Keys & Connections to use this feature.`);
+  if(!tenantApiKeyLooksValid(p.providerId,secret)) throw new Error(`That does not look like a valid ${p.displayName} API key. It was not saved.`);
+  const tenant=tenantId(), userId=currentUserId(), encrypted=encryptSecret(secret), preview=tenantApiKeyPreview(secret);
+  const row={id:uuid('tenantkey'),tenantId:tenant,provider:p.providerId,encryptedSecret:encrypted,keyPreview:preview,status:'saved',lastTestedAt:null,lastUpdatedAt:new Date().toISOString(),createdByUserId:userId,updatedByUserId:userId,metadata:{...metadata,displayName:p.displayName},createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  await valDbReady;
+  let saved;
+  if(pgPool){
+    const r=await dbQuery(`insert into tenant_api_keys (id,tenant_id,provider,encrypted_secret,key_preview,status,last_updated_at,created_by_user_id,updated_by_user_id,metadata_json,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,$6,now(),$7,$8,$9,now(),now())
+      on conflict (tenant_id,provider) do update set encrypted_secret=excluded.encrypted_secret,key_preview=excluded.key_preview,status=excluded.status,last_updated_at=now(),updated_by_user_id=excluded.updated_by_user_id,metadata_json=excluded.metadata_json,updated_at=now()
+      returning *`,[row.id,tenant,p.providerId,encrypted,preview,row.status,userId,userId,JSON.stringify(redactSecurityValue(row.metadata))]);
+    saved=normalizeTenantApiKeyRow(r.rows[0]);
+  }else{
+    const store=valStore(),rows=nextStoreArray(store,'tenantApiKeys');
+    let existing=rows.find(r=>r.tenantId===tenant&&r.provider===p.providerId);
+    if(!existing){existing=row;rows.push(existing);}else Object.assign(existing,row,{id:existing.id,createdAt:existing.createdAt,createdByUserId:existing.createdByUserId||userId});
+    saveValStore(store);
+    saved=normalizeTenantApiKeyRow(existing);
+  }
+  await auditLog({req,action:'tenant_api_key_saved',resourceType:'tenant_api_key',resourceId:p.providerId,metadata:{provider:p.providerId,keyPreview:preview},success:true}).catch(()=>{});
+  return saved;
+}
+async function updateTenantApiKeyStatus(provider,status,{req=null,errorMessage=''}={}){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) return null;
+  const tenant=tenantId();
+  if(pgPool){
+    const r=await dbQuery('update tenant_api_keys set status=$1,last_tested_at=now(),updated_at=now(),metadata_json=metadata_json || $2::jsonb where tenant_id=$3 and provider=$4 returning *',[status,JSON.stringify(errorMessage?{lastError:errorMessage}:{}),tenant,p.providerId]);
+    return normalizeTenantApiKeyRow(r.rows[0]);
+  }
+  const store=valStore(),row=(store.tenantApiKeys||[]).find(r=>r.tenantId===tenant&&r.provider===p.providerId);
+  if(row){row.status=status;row.lastTestedAt=new Date().toISOString();row.updatedAt=new Date().toISOString();row.metadata={...(row.metadata||{}),...(errorMessage?{lastError:errorMessage}:{})};saveValStore(store);}
+  return normalizeTenantApiKeyRow(row);
+}
+async function deleteTenantApiKey(req,provider){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) throw new Error('Unsupported provider');
+  const tenant=tenantId();
+  if(pgPool) await dbQuery('delete from tenant_api_keys where tenant_id=$1 and provider=$2',[tenant,p.providerId]);
+  else{const store=valStore();store.tenantApiKeys=(store.tenantApiKeys||[]).filter(r=>!(r.tenantId===tenant&&r.provider===p.providerId));saveValStore(store);}
+  await auditLog({req,action:'tenant_api_key_deleted',resourceType:'tenant_api_key',resourceId:p.providerId,metadata:{provider:p.providerId},success:true}).catch(()=>{});
+  return {ok:true};
+}
+async function tenantApiKeyConnectionStatuses(){
+  const keys=[];
+  for(const p of Object.values(TENANT_API_KEY_PROVIDER_REGISTRY)){
+    const [approval,row]=await Promise.all([tenantProviderApproval(p.providerId),getTenantApiKeyRow(p.providerId)]);
+    const saved=normalizeTenantApiKeyRow(row);
+    keys.push({...p,approvalStatus:approval.status,approved:approval.approved,status:saved?.status||(approval.approved?'missing':'not_approved'),keyPreview:saved?.keyPreview||'',lastTestedAt:saved?.lastTestedAt||'',lastUpdatedAt:saved?.lastUpdatedAt||'',updatedByUserId:saved?.updatedByUserId||'',metadata:saved?.metadata||{}});
+  }
+  return keys;
+}
+async function testTenantApiKey(req,provider){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) throw new Error('Unsupported provider');
+  const approval=await tenantProviderApproval(p.providerId);
+  if(!approval.approved) throw new Error('This connection requires approval before it can be added to your VAL.');
+  const key=await getTenantApiKeySecret(p.providerId);
+  if(!key) throw new Error(`Your ${p.displayName} key is not connected yet. Add it in API Keys & Connections to use this feature.`);
+  let ok=false, message='';
+  try{
+    if(p.testType==='openai_models'){
+      const r=await fetch('https://api.openai.com/v1/models',{headers:{Authorization:`Bearer ${key}`}});
+      ok=r.ok; message=ok?'Connected':`Your ${p.displayName} key did not validate. Please check the key and try again. (${r.status})`;
+    }else if(p.testType==='anthropic_models'){
+      const r=await fetch('https://api.anthropic.com/v1/models',{headers:{'x-api-key':key,'anthropic-version':'2023-06-01'}});
+      ok=r.ok; message=ok?'Connected':`Your ${p.displayName} key did not validate. Please check the key and try again. (${r.status})`;
+    }else{
+      ok=key.length>=8; message=ok?'Saved. A live low-cost validation endpoint is not configured yet for this provider.':'Your key did not validate. Please check the key and try again.';
+    }
+    await updateTenantApiKeyStatus(p.providerId,ok?'connected':'invalid',{req,errorMessage:ok?'':message});
+    await auditLog({req,action:'tenant_api_key_tested',resourceType:'tenant_api_key',resourceId:p.providerId,metadata:{provider:p.providerId,status:ok?'connected':'invalid'},success:ok}).catch(()=>{});
+    return {ok,status:ok?'connected':'invalid',message,provider:p.providerId};
+  }catch(e){
+    await updateTenantApiKeyStatus(p.providerId,'invalid',{req,errorMessage:e.message}).catch(()=>{});
+    await auditLog({req,action:'tenant_api_key_tested',resourceType:'tenant_api_key',resourceId:p.providerId,metadata:{provider:p.providerId,error:e.message},success:false}).catch(()=>{});
+    throw e;
+  }
+}
+function platformKeyFallbackAllowed(provider=''){
+  const explicit=String(process.env.VAL_ALLOW_PLATFORM_KEY_FALLBACK||process.env.VAL_ADMIN_ALLOW_PLATFORM_KEY_FALLBACK||'').trim();
+  if(DEMO_MODE || /^(1|true|yes)$/i.test(explicit)) return true;
+  if(/^(0|false|no)$/i.test(explicit)) return false;
+  const p=String(provider||'').toLowerCase();
+  if(p==='openai'&&OPENAI_KEY&&!/^(1|true|yes)$/i.test(String(process.env.VAL_REQUIRE_TENANT_OPENAI_KEY||''))) return true;
+  return false;
+}
+async function resolveTenantApiKey(provider,{fallback='',allowPlatformFallback=platformKeyFallbackAllowed(),sourceLabel='runtime'}={}){
+  const p=tenantApiKeyProvider(provider);
+  if(!p) return fallback||'';
+  const tenantKey=await getTenantApiKeySecret(p.providerId).catch(e=>{console.error(`Tenant API key read failed for ${p.providerId}:`,e.message);return '';});
+  if(tenantKey&&tenantApiKeyLooksValid(p.providerId,tenantKey)){console.log(`[tenant-key] ${sourceLabel} using tenant vault key for ${p.providerId}`);return tenantKey;}
+  if(tenantKey&&!tenantApiKeyLooksValid(p.providerId,tenantKey)){
+    console.warn(`[tenant-key] ${sourceLabel} ignoring invalid tenant vault key for ${p.providerId}`);
+    await updateTenantApiKeyStatus(p.providerId,'invalid',{errorMessage:'Stored key does not match expected provider key format.'}).catch(()=>{});
+  }
+  const legacy=await (async()=>{const row=await getIntegrationCredential(p.providerId,'api_key');const encrypted=row?.encrypted_value||row?.encryptedValue;return encrypted?decryptSecret(encrypted):'';})().catch(e=>{console.error(`Legacy integration credential read failed for ${p.providerId}:`,e.message);return '';});
+  if(legacy&&tenantApiKeyLooksValid(p.providerId,legacy)){console.log(`[tenant-key] ${sourceLabel} using legacy tenant credential for ${p.providerId}`);return legacy;}
+  if(allowPlatformFallback&&fallback){console.log(`[tenant-key] ${sourceLabel} using platform/demo fallback for ${p.providerId}`);return fallback;}
+  return '';
+}
+async function createSession(userId,req=null){
   const id=uuid('sess');
   const expires=new Date(Date.now()+14*24*60*60*1000).toISOString();
   if(pgPool){
-    await dbQuery('insert into val_sessions (id,user_id,client_slug,expires_at) values ($1,$2,$3,$4)',[id,userId,CLIENT_CONFIG.clientSlug,expires]);
+    await dbQuery('insert into val_sessions (id,user_id,client_slug,tenant_id,ip_address,user_agent,expires_at) values ($1,$2,$3,$4,$5,$6,$7)',[id,userId,CLIENT_CONFIG.clientSlug,tenantId(),req?requestIp(req):'',req?requestUserAgent(req):'',expires]);
   }else{
     const store=valStore();
     store.sessions=store.sessions||[];
-    store.sessions.push({id,userId,clientSlug:CLIENT_CONFIG.clientSlug,expiresAt:expires});
+    store.sessions.push({id,userId,clientSlug:CLIENT_CONFIG.clientSlug,tenantId:tenantId(),ipAddress:req?requestIp(req):'',userAgent:req?requestUserAgent(req):'',lastActiveAt:new Date().toISOString(),expiresAt:expires});
     saveValStore(store);
   }
   return id;
@@ -1439,23 +2283,218 @@ async function getSessionUser(req){
   const sessionId=verifySignedSession(signed);
   if(!sessionId) return null;
   if(pgPool){
-    const r=await dbQuery(`select u.id,u.email,u.name,u.role from val_sessions s join val_users u on u.id=s.user_id where s.id=$1 and s.expires_at>now() limit 1`,[sessionId]);
+    await dbQuery('update val_sessions set last_active_at=now() where id=$1 and tenant_id=$2',[sessionId,tenantId()]).catch(()=>{});
+    const r=await dbQuery(`select u.id,u.email,u.name,u.role from val_sessions s join val_users u on u.id=s.user_id where s.id=$1 and s.tenant_id=$2 and s.expires_at>now() limit 1`,[sessionId,tenantId()]);
     return r&&r.rows&&r.rows[0]?publicUser(r.rows[0]):null;
   }
   const store=valStore();
-  const session=(store.sessions||[]).find(s=>s.id===sessionId&&new Date(s.expiresAt).getTime()>Date.now());
+  const session=(store.sessions||[]).find(s=>s.id===sessionId&&(s.tenantId||CLIENT_CONFIG.clientSlug)===tenantId()&&new Date(s.expiresAt).getTime()>Date.now());
   if(!session) return null;
+  session.lastActiveAt=new Date().toISOString();saveValStore(store);
   return publicUser((store.users||[]).find(u=>u.id===session.userId));
 }
 async function destroySession(req){
   const sessionId=verifySignedSession(parseCookies(req)[SESSION_COOKIE]);
   if(!sessionId) return;
-  if(pgPool) await dbQuery('delete from val_sessions where id=$1',[sessionId]);
+  if(pgPool) await dbQuery('delete from val_sessions where id=$1 and tenant_id=$2',[sessionId,tenantId()]);
   else{
     const store=valStore();
     store.sessions=(store.sessions||[]).filter(s=>s.id!==sessionId);
     saveValStore(store);
   }
+}
+function currentSessionId(req){
+  return verifySignedSession(parseCookies(req)[SESSION_COOKIE]);
+}
+function rowToSecurityAudit(row){
+  return {
+    id:row.id,
+    tenantId:row.tenant_id||row.tenantId,
+    userId:row.user_id||row.userId||'',
+    action:row.action,
+    resourceType:row.resource_type||row.resourceType||'',
+    resourceId:row.resource_id||row.resourceId||'',
+    ipAddress:row.ip_address||row.ipAddress||'',
+    userAgent:row.user_agent||row.userAgent||'',
+    metadata:row.metadata||{},
+    success:row.success!==false,
+    createdAt:row.created_at?row.created_at.toISOString():row.createdAt
+  };
+}
+async function listSecurityAuditLogs(limit=100){
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery('select * from security_audit_logs where tenant_id=$1 order by created_at desc limit $2',[tenantId(),Math.min(Number(limit)||100,250)]);
+    return r.rows.map(rowToSecurityAudit);
+  }
+  return (valStore().securityAuditLogs||[]).filter(a=>a.tenantId===tenantId()).slice(-Math.min(Number(limit)||100,250)).reverse();
+}
+async function getSupportAccess(){
+  await valDbReady;
+  const fallback={supportAccessEnabled:false,supportAccessExpiresAt:null,supportAccessGrantedBy:'',supportAccessReason:''};
+  if(pgPool){
+    const r=await dbQuery('select * from tenant_support_access where tenant_id=$1 limit 1',[tenantId()]);
+    const row=r.rows[0];
+    if(!row)return fallback;
+    const expired=row.support_access_expires_at&&new Date(row.support_access_expires_at).getTime()<Date.now();
+    return {supportAccessEnabled:!!row.support_access_enabled&&!expired,supportAccessExpiresAt:row.support_access_expires_at?row.support_access_expires_at.toISOString():null,supportAccessGrantedBy:row.support_access_granted_by||'',supportAccessReason:row.support_access_reason||'',expired};
+  }
+  const row=(valStore().supportAccess||{})[tenantId()]||fallback;
+  const expired=row.supportAccessExpiresAt&&new Date(row.supportAccessExpiresAt).getTime()<Date.now();
+  return {...fallback,...row,supportAccessEnabled:!!row.supportAccessEnabled&&!expired,expired};
+}
+async function setSupportAccess({enabled,expiresAt='',reason='',grantedBy=''}){
+  const record={supportAccessEnabled:!!enabled,supportAccessExpiresAt:enabled?(expiresAt||new Date(Date.now()+2*60*60*1000).toISOString()):null,supportAccessGrantedBy:grantedBy||currentUserId(),supportAccessReason:enabled?String(reason||'Temporary support access requested by owner'):'',updatedAt:new Date().toISOString()};
+  if(pgPool){
+    await dbQuery(`insert into tenant_support_access (tenant_id,support_access_enabled,support_access_expires_at,support_access_granted_by,support_access_reason,updated_at)
+      values ($1,$2,$3,$4,$5,now())
+      on conflict (tenant_id) do update set support_access_enabled=excluded.support_access_enabled,support_access_expires_at=excluded.support_access_expires_at,support_access_granted_by=excluded.support_access_granted_by,support_access_reason=excluded.support_access_reason,updated_at=now()`,[tenantId(),record.supportAccessEnabled,record.supportAccessExpiresAt,record.supportAccessGrantedBy,record.supportAccessReason]);
+  }else{
+    const store=valStore();store.supportAccess=store.supportAccess||{};store.supportAccess[tenantId()]=record;saveValStore(store);
+  }
+  return getSupportAccess();
+}
+async function listActiveSecuritySessions(){
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery(`select s.id,s.user_id,u.email,u.name,u.role,s.ip_address,s.user_agent,s.last_active_at,s.created_at,s.expires_at
+      from val_sessions s left join val_users u on u.id=s.user_id
+      where s.tenant_id=$1 and s.expires_at>now()
+      order by s.last_active_at desc nulls last limit 100`,[tenantId()]);
+    return r.rows.map(row=>({id:row.id,userId:row.user_id,email:row.email||'',name:row.name||'',role:row.role||'',ipAddress:row.ip_address||'',userAgent:row.user_agent||'',lastActiveAt:row.last_active_at?row.last_active_at.toISOString():null,createdAt:row.created_at?row.created_at.toISOString():null,expiresAt:row.expires_at?row.expires_at.toISOString():null}));
+  }
+  const users=valStore().users||[];
+  return (valStore().sessions||[]).filter(s=>(s.tenantId||CLIENT_CONFIG.clientSlug)===tenantId()&&new Date(s.expiresAt||0)>new Date()).map(s=>{const u=users.find(x=>x.id===s.userId)||{};return {id:s.id,userId:s.userId,email:u.email||'',name:u.name||'',role:u.role||'',ipAddress:s.ipAddress||'',userAgent:s.userAgent||'',lastActiveAt:s.lastActiveAt||s.createdAt||'',createdAt:s.createdAt||'',expiresAt:s.expiresAt||''};}).reverse();
+}
+async function revokeSecuritySession(sessionId){
+  if(pgPool) await dbQuery('delete from val_sessions where id=$1 and tenant_id=$2',[sessionId,tenantId()]);
+  else{
+    const store=valStore();store.sessions=(store.sessions||[]).filter(s=>!(s.id===sessionId&&(s.tenantId||CLIENT_CONFIG.clientSlug)===tenantId()));saveValStore(store);
+  }
+}
+async function securityCenterPayload(req){
+  const [googleStatus,microsoftSaved,credentials,sessions,auditLogs,support]=await Promise.all([
+    getGoogleConnectionStatus(GOOGLE_SCOPES).catch(e=>({connected:false,error:e.message,missingScopes:GOOGLE_SCOPES})),
+    loadOAuthTokens('microsoft').catch(()=>null),
+    listIntegrationCredentials(currentUserId()).catch(()=>[]),
+    listActiveSecuritySessions().catch(()=>[]),
+    listSecurityAuditLogs(120).catch(()=>[]),
+    getSupportAccess().catch(()=>({supportAccessEnabled:false}))
+  ]);
+  const microsoftToken=await getMicrosoftToken().catch(()=>null);
+  const lastSecurityActivity=auditLogs[0]?.createdAt||'';
+  const gmailConnected=googleStatus.connected&&!googleStatus.missingScopes?.includes('https://www.googleapis.com/auth/gmail.readonly');
+  const googleCalendarConnected=googleStatus.connected&&!googleStatus.missingScopes?.includes('https://www.googleapis.com/auth/calendar.readonly');
+  const ghlConnected=credentials.some(c=>c.provider==='ghl'&&/connected|saved|not tested/i.test(String(c.status||'')))||!!(GHL_KEY&&GHL_LOC);
+  const connectedAccounts=[
+    {provider:'gmail',label:'Gmail',connected:!!gmailConnected,lastSuccessfulSync:gmailSyncStatus.lastSuccessfulSyncAt||'',lastFailedSync:gmailSyncStatus.lastError?gmailSyncStatus.lastAttemptAt:'',error:gmailSyncStatus.lastError||googleStatus.error||'',reconnectUrl:'/auth/google',disconnectProvider:'google'},
+    {provider:'google_calendar',label:'Google Calendar',connected:!!googleCalendarConnected,lastSuccessfulSync:'',lastFailedSync:googleStatus.error?new Date().toISOString():'',error:googleStatus.error||'',reconnectUrl:'/auth/google',disconnectProvider:'google'},
+    {provider:'outlook',label:'Outlook Mail',connected:!!microsoftToken,lastSuccessfulSync:'',lastFailedSync:'',error:microsoftSaved?'':'Microsoft not connected',reconnectUrl:'/auth/microsoft',disconnectProvider:'microsoft'},
+    {provider:'microsoft_calendar',label:'Microsoft Calendar',connected:!!microsoftToken,lastSuccessfulSync:'',lastFailedSync:'',error:microsoftSaved?'':'Microsoft not connected',reconnectUrl:'/auth/microsoft',disconnectProvider:'microsoft'},
+    {provider:'ghl',label:'GHL / CRM',connected:!!ghlConnected,lastSuccessfulSync:'',lastFailedSync:'',error:ghlConnected?'':'GHL not configured',reconnectUrl:'',disconnectProvider:'ghl'}
+  ];
+  const dataSources=[
+    {name:'Email',access:!!(gmailConnected||microsoftToken),scope:'Read/search connected inbox metadata and snippets; drafts require approval.'},
+    {name:'Calendar',access:!!(googleCalendarConnected||microsoftToken),scope:'Read events and create private task blocks when approved.'},
+    {name:'Contacts',access:true,scope:'Tenant-scoped CRM/contact context.'},
+    {name:'Transcripts',access:true,scope:'Tenant-scoped transcript inbox, summaries, staged tasks, and review items.'},
+    {name:'CRM/GHL',access:!!ghlConnected,scope:'Configured GHL location only.'},
+    {name:'Tasks',access:true,scope:'Tenant-scoped VAL tasks and calendarized task blocks.'},
+    {name:'Opportunities',access:!!ghlConnected,scope:'GHL opportunities when configured.'},
+    {name:'Files/documents',access:credentials.some(c=>/google|drive|docs/i.test(c.provider))||googleStatus.connected,scope:'Uploaded VAL files and authorized Google Docs/Drive scopes.'}
+  ];
+  return {
+    ok:true,
+    tenantId:tenantId(),
+    user:req.valUser||currentValUser(),
+    securityStatus:{
+      tenantIsolation:'active',
+      oauthTokenEncryption:encryptionConfigured()?'active':'not_configured',
+      auditLogging:'active',
+      supportAccess:support.supportAccessEnabled?'on':'off',
+      supportAccessExpiresAt:support.supportAccessExpiresAt||null,
+      lastSecurityActivity,
+      connectedAccountsCount:connectedAccounts.filter(a=>a.connected).length,
+      warnings:clientIsolationWarnings()
+    },
+    connectedAccounts,
+    dataSources,
+    sessions,
+    loginHistory:auditLogs.filter(a=>a.action==='login').slice(0,20),
+    auditLogs,
+    supportAccess:support,
+    dataControls:{exportReady:true,deleteReady:true,confirmationPhrase:'DELETE MY VAL DATA',deleteWarning:'This permanently deletes tenant-scoped VAL tasks, transcripts, drafts, memory, templates, local calendar blocks, OAuth tokens, integration credentials, email rules/logs, and prior audit logs. External Gmail, Microsoft, and GHL records are not deleted.'},
+    rolePermissions:SECURITY_ROLE_PERMISSIONS
+  };
+}
+async function purgeTenantData({req,confirmation}={}){
+  const expected='DELETE MY VAL DATA';
+  if(String(confirmation||'').trim()!==expected) throw new Error(`Type exactly "${expected}" to confirm.`);
+  const tenant=tenantId(), userId=currentUserId(), currentSession=currentSessionId(req);
+  const deleted={}, count=async(table,where,params)=>{try{if(!pgPool)return 0;const r=await dbQuery(`select count(*)::int as count from ${table} where ${where}`,params);return Number(r.rows?.[0]?.count||0);}catch(e){return 0;}};
+  if(pgPool){
+    const tables=[
+      ['transcript_contact_updates','transcript_id in (select transcript_id from transcripts where tenant_id=$1)',[tenant]],
+      ['transcript_tasks','transcript_id in (select transcript_id from transcripts where tenant_id=$1)',[tenant]],
+      ['transcript_summaries','transcript_id in (select transcript_id from transcripts where tenant_id=$1)',[tenant]],
+      ['transcript_participants','transcript_id in (select transcript_id from transcripts where tenant_id=$1)',[tenant]],
+      ['transcript_action_log','transcript_id in (select transcript_id from transcripts where tenant_id=$1)',[tenant]],
+      ['meeting_transcript_links','tenant_id=$1',[tenant]],
+      ['transcripts','tenant_id=$1',[tenant]],
+      ['val_transcripts','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['val_task_calendar_blocks','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['val_tasks','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['drafts','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['val_templates','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['val_memory_items','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['val_calendar_events','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['val_messages','conversation_id in (select id from val_conversations where tenant_id=$1 and user_id=$2)',[tenant,userId]],
+      ['val_conversations','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['email_rules','tenant_id=$1 and (user_id=$2 or user_id is null)',[tenant,userId]],
+      ['email_action_log','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['tenant_api_keys','tenant_id=$1',[tenant]],
+      ['tenant_provider_approvals','tenant_id=$1',[tenant]],
+      ['tenant_dashboard_studio_overrides','tenant_id=$1',[tenant]],
+      ['user_integration_credentials','tenant_id=$1 and (user_id=$2 or user_id is null)',[tenant,userId]],
+      ['val_oauth_tokens','tenant_id=$1 and user_id=$2',[tenant,userId]],
+      ['tenant_support_access','tenant_id=$1',[tenant]],
+      ['val_sessions','tenant_id=$1 and id<>$2',[tenant,currentSession||'']]
+    ];
+    for(const [table,where,params] of tables){
+      deleted[table]=await count(table,where,params);
+      await dbQuery(`delete from ${table} where ${where}`,params);
+    }
+    deleted.security_audit_logs=await count('security_audit_logs','tenant_id=$1',[tenant]);
+    await dbQuery('delete from security_audit_logs where tenant_id=$1',[tenant]);
+  }else{
+    const store=valStore();
+    const keepUser=(row)=>row.userId!==userId&&row.user_id!==userId;
+    const keepTenant=(row)=>row.tenantId!==tenant&&row.tenant_id!==tenant;
+    for(const key of ['transcriptIndex','transcriptParticipants','transcriptSummaries','transcriptTasks','transcriptContactUpdates','transcriptActionLog','meetingTranscriptLinks']){
+      const arr=store[key]||[];
+      deleted[key]=arr.length;
+      store[key]=key==='transcriptIndex'?arr.filter(keepTenant):[];
+    }
+    for(const key of ['drafts','templates','memoryItems','conversations','messages','emailRules','emailActionLog','securityAuditLogs']){
+      const arr=store[key]||[];
+      const before=arr.length;
+      store[key]=arr.filter(row=>keepTenant(row)&&keepUser(row));
+      deleted[key]=before-store[key].length;
+    }
+    const tasks=readTasks(), beforeTasks=tasks.length;writeTasks(tasks.filter(keepUser));deleted.val_tasks=beforeTasks-readTasks().length;
+    store.oauthTokens={};
+    store.integrationCredentials=(store.integrationCredentials||[]).filter(row=>keepTenant(row)&&keepUser(row));
+    store.tenantApiKeys=(store.tenantApiKeys||[]).filter(keepTenant);
+    store.tenantProviderApprovals=(store.tenantProviderApprovals||[]).filter(keepTenant);
+    store.tenantDashboardStudioOverrides=(store.tenantDashboardStudioOverrides||[]).filter(keepTenant);
+    if(store.supportAccess) delete store.supportAccess[tenant];
+    store.sessions=(store.sessions||[]).filter(s=>(s.tenantId||CLIENT_CONFIG.clientSlug)!==tenant||s.id===currentSession);
+    saveValStore(store);
+  }
+  googleTokens={};googleTokensLoaded=true;lastGoogleAuthError='Google disconnected because tenant data was deleted.';
+  gmailSyncStatus={lastAttemptAt:'',lastSuccessfulSyncAt:'',lastError:'',lastFetchedCount:0,lastAnalyzedCount:0,lastQuery:''};
+  const tombstone=await auditLog({req,tenantId:tenant,userId,action:'data_deleted',resourceType:'tenant',resourceId:tenant,metadata:{deleted,externalSystems:'External Gmail, Microsoft, and GHL records were not deleted; VAL access tokens/credentials were removed.'},success:true});
+  return {ok:true,tenantId:tenant,deleted,tombstoneId:tombstone.id,message:'VAL tenant data deleted. External provider records were not deleted, but VAL access credentials were removed.'};
 }
 function memoryChunks(text){
   const clean = String(text||'').replace(/\r\n/g,'\n').trim();
@@ -1497,6 +2536,390 @@ async function dbQuery(sql,params){
     return {rows:[],rowCount:0};
   }
 }
+function railwayFix(variableName, redeploy=true){
+  return `Railway → Your Baby VAL project → Variables → Add ${variableName}${redeploy?' → Redeploy':''}`;
+}
+function envStatus({name,present,misconfigured=false,controls,fix}){
+  return {
+    name,
+    status:present?(misconfigured?'Misconfigured':'Connected'):'Missing',
+    controls,
+    howToFix:fix || railwayFix(name),
+    redeployRequired:true
+  };
+}
+function missingEnvNames(names){
+  return names.filter(name=>!process.env[name]);
+}
+function setupHealthPayload(){
+  const googleMissing=missingEnvNames(['GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_REDIRECT_URI']);
+  const microsoftMissing=missingEnvNames(['MICROSOFT_CLIENT_ID','MICROSOFT_CLIENT_SECRET','MICROSOFT_REDIRECT_URI']);
+  return {
+    ok:true,
+    generatedAt:new Date().toISOString(),
+    items:[
+      envStatus({name:'DATABASE_URL',present:!!process.env.DATABASE_URL,controls:'Postgres storage for chats, Dashboard Studio settings, OAuth tokens, tasks, transcripts, and memory.',fix:'Railway → Your Baby VAL project → Add or attach Postgres → confirm DATABASE_URL exists in Variables → Redeploy'}),
+      envStatus({name:'OPENAI_API_KEY',present:!!OPENAI_KEY,controls:'Baby VAL chat and AI responses.',fix:'Railway → Your Baby VAL project → Variables → Add OPENAI_API_KEY → Redeploy Baby VAL'}),
+      envStatus({name:'GOOGLE_CLIENT_ID',present:!!GOOGLE_CLIENT_ID,misconfigured:!!GOOGLE_CLIENT_ID&&!validGoogleClientId(),controls:'Google OAuth for Gmail and Google Calendar.',fix:'Railway → Your Baby VAL project → Variables → Add GOOGLE_CLIENT_ID → Redeploy'}),
+      envStatus({name:'GOOGLE_CLIENT_SECRET',present:!!GOOGLE_CLIENT_SECRET,controls:'Google OAuth secret for Gmail and Google Calendar.',fix:railwayFix('GOOGLE_CLIENT_SECRET')}),
+      envStatus({name:'GOOGLE_REDIRECT_URI',present:!!CONFIGURED_GOOGLE_REDIRECT_URI,controls:'Google OAuth callback URL. Use https://your-app.up.railway.app/auth/callback.',fix:railwayFix('GOOGLE_REDIRECT_URI')}),
+      envStatus({name:'MICROSOFT_CLIENT_ID',present:!!MICROSOFT_CLIENT_ID,controls:'Microsoft OAuth for Outlook Mail and Calendar.',fix:railwayFix('MICROSOFT_CLIENT_ID')}),
+      envStatus({name:'MICROSOFT_CLIENT_SECRET',present:!!MICROSOFT_CLIENT_SECRET,controls:'Microsoft OAuth secret for Outlook Mail and Calendar.',fix:railwayFix('MICROSOFT_CLIENT_SECRET')}),
+      envStatus({name:'MICROSOFT_REDIRECT_URI',present:!!process.env.MICROSOFT_REDIRECT_URI,controls:'Microsoft OAuth callback URL. Use https://your-app.up.railway.app/auth/microsoft/callback.',fix:railwayFix('MICROSOFT_REDIRECT_URI')})
+    ],
+    google:{
+      connected:false,
+      configured:googleMissing.length===0,
+      missingVariables:googleMissing,
+      setupMessage:googleMissing.length?`Google cannot connect yet because these Railway variables are missing: ${googleMissing.join(', ')}. Add them in Railway → Variables, then redeploy.`:'Google is configured. Use Connect Google or Reconnect Google to authorize Gmail and Google Calendar.'
+    },
+    microsoft:{
+      connected:false,
+      configured:microsoftMissing.length===0,
+      missingVariables:microsoftMissing,
+      setupMessage:microsoftMissing.length?`Microsoft cannot connect yet because these Railway variables are missing: ${microsoftMissing.join(', ')}. Add them in Railway → Variables, then redeploy.`:'Microsoft is configured. Use Connect Microsoft or Reconnect Microsoft to authorize Outlook Mail and Outlook Calendar.'
+    }
+  };
+}
+const DEFAULT_BABY_STUDIO_SETTINGS = {
+  babyValName:'',
+  welcomeMessage:'',
+  accentColor:'#C4963A',
+  aboutMe:'',
+  preferredTone:'',
+  importantLinks:[],
+  shownCards:['today','chat','calendar','tasks','integrations'],
+  simpleInstructions:''
+};
+const TEACH_VAL_VOICE_PROMPT = `You are VAL, a warm, intelligent Executive AI and Chief of Staff.
+
+This is your first conversation with your owner.
+
+Your job is not just to collect information. Your job is to begin understanding how this person thinks.
+
+Be warm, thoughtful, encouraging, and organized.
+
+Let the user ramble. Do not rush them. Do not interrupt long answers. If they tell a story, listen for the meaning behind the story.
+
+When they share something important, acknowledge it naturally and summarize what you heard.
+
+Use phrases like:
+- That is helpful context.
+- I can tell this matters to you.
+- Let me make sure I understood that.
+- That sounds like an important lesson.
+- I will make sure this is remembered.
+- Tell me more about that.
+
+Avoid exaggerated praise.
+Avoid therapy language.
+Avoid corporate hype.
+Avoid sounding like a questionnaire.
+
+You are helping this person teach VAL who they are, what they are building, who matters, what lessons they have learned, how they prefer to work, and where they need support.
+
+Move through these topics naturally:
+1. Who they are
+2. What they do
+3. Their company or work
+4. Their current projects
+5. Their most important people
+6. Lessons learned
+7. Frustrations and blockers
+8. Preferences and working style
+9. Missing processes or messy areas
+10. What they want VAL to help with first
+
+After each major topic, briefly summarize what you heard and ask if you understood correctly.
+
+At the end, thank them and explain that the next step is bringing in context from their existing ChatGPT or Claude account.`;
+const TEACH_VAL_KNOWLEDGE_CARDS = [
+  {category:'current_projects',title:'Current Projects',prompt:'Based on everything you know from our conversations, list my current active projects. For each project, include what it is, why it matters, current status, key people involved, open loops, frustrations, and what seems most important next.'},
+  {category:'important_people',title:'Important People',prompt:'Based on everything you know from our conversations, list the people, clients, partners, collaborators, mentors, team members, and important relationships I talk about most often. For each person, include who they are, how they are connected to me, what matters about the relationship, any opportunities, any concerns, and what a future executive assistant should remember.'},
+  {category:'lessons_learned',title:'Lessons Learned',prompt:'Based on everything you know from our conversations, list the lessons I have learned the hard way. Include the story or situation behind each lesson, what I learned, and what rule or reminder my future AI should remember.'},
+  {category:'work_preferences',title:'Work Preferences',prompt:'Based on everything you know from our conversations, describe how I prefer to work, communicate, make decisions, manage time, receive reminders, handle meetings, write, delegate, and use AI.'},
+  {category:'frustrations',title:'Frustrations and Repeated Problems',prompt:'Based on everything you know from our conversations, list the frustrations, blockers, messy processes, repeated problems, or operational gaps I bring up most often. Include what appears to cause them and what kind of support would help.'},
+  {category:'opportunities',title:'Opportunities',prompt:'Based on everything you know from our conversations, list the business opportunities, ideas, offers, partnerships, products, services, or strategies that still seem relevant. Include why each one matters and what the next step might be.'},
+  {category:'things_to_remember',title:'Things To Never Forget',prompt:'Based on everything you know from our conversations, what should a personal executive AI remember about me forever? Include values, preferences, context, important stories, priorities, relationships, and anything that would help it support me well.'}
+];
+function teachValDefaultState(){
+  return {
+    stage:'welcome',
+    progress:{welcome:'Not Started',voice_interview:'Not Started',current_projects:'Not Started',important_people:'Not Started',lessons_learned:'Not Started',work_preferences:'Not Started',frustrations:'Not Started',opportunities:'Not Started',things_to_remember:'Not Started',review:'Not Started',send_to_val:'Not Started'},
+    voiceInterview:{transcript:'',summary:null,duration:null,status:'Not Started'},
+    testMode:true,
+    lastError:'',
+    webhookAttempts:[]
+  };
+}
+function normalizeTeachValState(state={}){
+  return {...teachValDefaultState(),...(state||{}),progress:{...teachValDefaultState().progress,...((state||{}).progress||{})},voiceInterview:{...teachValDefaultState().voiceInterview,...((state||{}).voiceInterview||{})}};
+}
+function teachValCardFor(category){
+  return TEACH_VAL_KNOWLEDGE_CARDS.find(c=>c.category===category)||null;
+}
+function teachValStoreArray(name){
+  const store=valStore();
+  store[name]=Array.isArray(store[name])?store[name]:[];
+  return {store,rows:store[name]};
+}
+function teachValSessionRow(row){
+  if(!row)return null;
+  return {
+    id:row.id,
+    tenantId:row.tenant_id||row.tenantId||tenantId(),
+    userId:row.user_id||row.userId||currentUserId(),
+    status:row.status||'draft',
+    state:normalizeTeachValState(row.state_json||row.stateJson||row.state||{}),
+    createdAt:row.created_at||row.createdAt||new Date().toISOString(),
+    updatedAt:row.updated_at||row.updatedAt||new Date().toISOString()
+  };
+}
+function teachValImportRow(row){
+  if(!row)return null;
+  return {
+    id:row.id,
+    sessionId:row.session_id||row.sessionId,
+    tenantId:row.tenant_id||row.tenantId||tenantId(),
+    userId:row.user_id||row.userId||currentUserId(),
+    category:row.category,
+    promptUsed:row.prompt_used||row.promptUsed||'',
+    rawResponse:row.raw_response||row.rawResponse||'',
+    structuredSummary:row.structured_json||row.structuredSummary||{},
+    extractedItems:row.items_json||row.extractedItems||[],
+    reviewed:!!row.reviewed,
+    status:row.status||'Waiting for Paste',
+    createdAt:row.created_at||row.createdAt||new Date().toISOString(),
+    updatedAt:row.updated_at||row.updatedAt||new Date().toISOString()
+  };
+}
+function teachValMemoryRow(row){
+  if(!row)return null;
+  return {
+    id:row.id,
+    sessionId:row.session_id||row.sessionId,
+    tenantId:row.tenant_id||row.tenantId||tenantId(),
+    userId:row.user_id||row.userId||currentUserId(),
+    category:row.category,
+    title:row.title||'',
+    summary:row.summary||'',
+    source:row.source||'teach_val_onboarding',
+    confidence:Number(row.confidence||0.72),
+    data:row.data_json||row.data||{},
+    createdAt:row.created_at||row.createdAt||new Date().toISOString()
+  };
+}
+async function getTeachValSession(id=''){
+  await valDbReady;
+  if(pgPool){
+    const args=[tenantId(),currentUserId()];
+    let where='tenant_id=$1 and user_id=$2';
+    if(id){args.push(id);where+=' and id=$3';}
+    const r=await dbQuery(`select * from teach_val_onboarding_sessions where ${where} order by updated_at desc limit 1`,args);
+    return teachValSessionRow(r.rows[0]);
+  }
+  const {rows}=teachValStoreArray('teachValOnboardingSessions');
+  const found=rows.filter(r=>r.tenantId===tenantId()&&r.userId===currentUserId()&&(!id||r.id===id)).sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0))[0];
+  return teachValSessionRow(found);
+}
+async function saveTeachValSession(session){
+  await valDbReady;
+  const clean=teachValSessionRow(session);
+  clean.updatedAt=new Date().toISOString();
+  if(pgPool){
+    await dbQuery(`insert into teach_val_onboarding_sessions (id,tenant_id,user_id,status,state_json,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,coalesce($6::timestamptz,now()),now())
+      on conflict (id) do update set status=excluded.status,state_json=excluded.state_json,updated_at=now()`,[clean.id,clean.tenantId,clean.userId,clean.status,JSON.stringify(clean.state),clean.createdAt]);
+    return getTeachValSession(clean.id);
+  }
+  const {store,rows}=teachValStoreArray('teachValOnboardingSessions');
+  const idx=rows.findIndex(r=>r.id===clean.id);
+  const row={id:clean.id,tenantId:clean.tenantId,userId:clean.userId,status:clean.status,state:clean.state,createdAt:clean.createdAt,updatedAt:clean.updatedAt};
+  if(idx>=0)rows[idx]=row;else rows.unshift(row);
+  saveValStore(store);
+  return teachValSessionRow(row);
+}
+async function listTeachValImports(sessionId){
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery('select * from teach_val_imports where tenant_id=$1 and user_id=$2 and session_id=$3 order by created_at asc',[tenantId(),currentUserId(),sessionId]);
+    return r.rows.map(teachValImportRow);
+  }
+  const {rows}=teachValStoreArray('teachValImports');
+  return rows.filter(r=>r.tenantId===tenantId()&&r.userId===currentUserId()&&r.sessionId===sessionId).map(teachValImportRow);
+}
+async function saveTeachValImport(record){
+  await valDbReady;
+  const row=teachValImportRow({...record,id:record.id||uuid('tvi'),tenantId:tenantId(),userId:currentUserId(),updatedAt:new Date().toISOString()});
+  if(pgPool){
+    await dbQuery(`insert into teach_val_imports (id,session_id,tenant_id,user_id,category,prompt_used,raw_response,structured_json,items_json,reviewed,status,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12::timestamptz,now()),now())
+      on conflict (id) do update set prompt_used=excluded.prompt_used,raw_response=excluded.raw_response,structured_json=excluded.structured_json,items_json=excluded.items_json,reviewed=excluded.reviewed,status=excluded.status,updated_at=now()`,[row.id,row.sessionId,row.tenantId,row.userId,row.category,row.promptUsed,row.rawResponse,JSON.stringify(row.structuredSummary||{}),JSON.stringify(row.extractedItems||[]),row.reviewed,row.status,row.createdAt]);
+    return teachValImportRow((await dbQuery('select * from teach_val_imports where id=$1',[row.id])).rows[0]);
+  }
+  const {store,rows}=teachValStoreArray('teachValImports');
+  const idx=rows.findIndex(r=>r.id===row.id);
+  const stored={id:row.id,sessionId:row.sessionId,tenantId:row.tenantId,userId:row.userId,category:row.category,promptUsed:row.promptUsed,rawResponse:row.rawResponse,structuredSummary:row.structuredSummary,extractedItems:row.extractedItems,reviewed:row.reviewed,status:row.status,createdAt:row.createdAt,updatedAt:row.updatedAt};
+  if(idx>=0)rows[idx]=stored;else rows.push(stored);
+  saveValStore(store);
+  return teachValImportRow(stored);
+}
+async function listTeachValMemory(sessionId){
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery('select * from teach_val_memory_items where tenant_id=$1 and user_id=$2 and session_id=$3 order by created_at desc',[tenantId(),currentUserId(),sessionId]);
+    return r.rows.map(teachValMemoryRow);
+  }
+  const {rows}=teachValStoreArray('teachValMemoryItems');
+  return rows.filter(r=>r.tenantId===tenantId()&&r.userId===currentUserId()&&r.sessionId===sessionId).map(teachValMemoryRow);
+}
+async function insertTeachValMemoryItems(items){
+  await valDbReady;
+  const saved=[];
+  for(const item of items){
+    const row=teachValMemoryRow({...item,id:item.id||uuid('tvm'),tenantId:tenantId(),userId:currentUserId(),createdAt:new Date().toISOString()});
+    if(pgPool){
+      await dbQuery(`insert into teach_val_memory_items (id,session_id,tenant_id,user_id,category,title,summary,source,confidence,data_json,created_at)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())
+        on conflict (id) do nothing`,[row.id,row.sessionId,row.tenantId,row.userId,row.category,row.title,row.summary,row.source,row.confidence,JSON.stringify(row.data||{})]);
+    }else{
+      const {store,rows}=teachValStoreArray('teachValMemoryItems');
+      rows.push({id:row.id,sessionId:row.sessionId,tenantId:row.tenantId,userId:row.userId,category:row.category,title:row.title,summary:row.summary,source:row.source,confidence:row.confidence,data:row.data,createdAt:row.createdAt});
+      saveValStore(store);
+    }
+    saved.push(row);
+  }
+  return saved;
+}
+async function teachValStateResponse(sessionId=''){
+  let session=await getTeachValSession(sessionId);
+  if(!session){
+    session=await saveTeachValSession({id:uuid('tvo'),tenantId:tenantId(),userId:currentUserId(),status:'draft',state:teachValDefaultState(),createdAt:new Date().toISOString()});
+  }
+  const imports=await listTeachValImports(session.id);
+  const memory=await listTeachValMemory(session.id);
+  return {ok:true,session,cards:TEACH_VAL_KNOWLEDGE_CARDS,imports,memory,voicePrompt:TEACH_VAL_VOICE_PROMPT};
+}
+function normalizeTeachValItems(category,items=[]){
+  return (Array.isArray(items)?items:[]).map((item,idx)=>{
+    const title=String(item.title||item.name||item.projectName||item.personName||item.lessonTitle||item.preferenceType||`${category} ${idx+1}`).trim();
+    const summary=String(item.summary||item.lesson||item.ruleGoingForward||item.howValShouldUseThis||item.nextStep||'').trim();
+    return {
+      id:item.id||uuid('tvi_item'),
+      title:title||`${category} ${idx+1}`,
+      summary:summary||String(JSON.stringify(item)).slice(0,260),
+      category:item.category||category,
+      source:item.source||'external_ai_import',
+      confidence:Number(item.confidence||0.72),
+      include_in_val:item.include_in_val!==false,
+      data:item
+    };
+  }).slice(0,40);
+}
+async function extractTeachValKnowledge({category,rawResponse,promptUsed}){
+  const card=teachValCardFor(category)||{};
+  if(!String(rawResponse||'').trim()) throw new Error('Paste the response from ChatGPT or Claude before saving this card.');
+  const system=[
+    'Extract calm, useful onboarding memory for an executive AI.',
+    'Return strict JSON only.',
+    'Do not invent facts. Use short summaries. Preserve source attribution.',
+    'Required JSON shape: {"summary":{}, "items":[{"title":"","summary":"","category":"","source":"external_ai_import","confidence":0.0,"include_in_val":true,"data":{}}]}',
+    'Categories should stay close to: projects, relationships, lessons, preferences, frustrations, process_gaps, opportunities, things_to_remember.'
+  ].join('\n');
+  const user=`Knowledge card: ${card.title||category}\nPrompt used:\n${promptUsed||card.prompt||''}\n\nRaw response:\n${String(rawResponse).slice(0,30000)}`;
+  const raw=await callValModel({system,user,maxTokens:2600,temperature:0.1,json:true}).catch(()=>null);
+  let parsed=null;
+  try{parsed=raw?JSON.parse(raw):null;}catch(e){}
+  if(!parsed){
+    const chunks=String(rawResponse).split(/\n{2,}|(?:^|\n)\s*[-*]\s+/).map(x=>x.trim()).filter(Boolean).slice(0,12);
+    parsed={summary:{fallback:true,card:card.title||category},items:chunks.map(x=>({title:x.split(/[.:]/)[0].slice(0,90)||card.title||category,summary:x.slice(0,500),category,source:'external_ai_import',confidence:0.48,include_in_val:true,data:{text:x}}))};
+  }
+  parsed.items=normalizeTeachValItems(category,parsed.items);
+  return parsed;
+}
+async function summarizeTeachValInterview(transcript){
+  const clean=String(transcript||'').trim();
+  if(!clean) throw new Error('Add the voice interview transcript before saving this stage.');
+  const system='Summarize a Teach VAL About You onboarding interview. Return strict JSON with keys: executive_profile, company_context, current_projects, important_relationships, lessons_learned, frustrations, preferences, process_gaps, priorities, raw_transcript.';
+  const raw=await callValModel({system,user:clean.slice(0,32000),maxTokens:2400,temperature:0.12,json:true}).catch(()=>null);
+  try{return raw?JSON.parse(raw):{raw_transcript:clean};}catch(e){return {executive_profile:{summary:clean.slice(0,800)},raw_transcript:clean};}
+}
+function teachValCompiledPayload({session,imports,items,testMode=false}){
+  const voice=session.state.voiceInterview||{};
+  const by=(name)=>items.filter(i=>i.category===name||i.data?.category===name);
+  return {
+    source:'teach_val_onboarding',
+    client_id:tenantId(),
+    user_id:currentUserId(),
+    created_at:new Date().toISOString(),
+    test_mode:!!testMode,
+    voice_interview:{transcript:voice.transcript||'',summary:voice.summary||{},duration:voice.duration||null},
+    external_ai_imports:imports.map(i=>({category:i.category,prompt_used:i.promptUsed,raw_response:i.rawResponse,structured_summary:i.structuredSummary,reviewed:!!i.reviewed})),
+    knowledge_cards:{
+      executive_profile:voice.summary?.executive_profile||{},
+      company_context:voice.summary?.company_context||{},
+      projects:by('current_projects').concat(by('projects')),
+      relationships:by('important_people').concat(by('relationships')),
+      lessons:by('lessons_learned').concat(by('lessons')),
+      preferences:by('work_preferences').concat(by('preferences')),
+      frustrations:by('frustrations'),
+      process_gaps:by('process_gaps'),
+      opportunities:by('opportunities'),
+      things_to_remember:by('things_to_remember')
+    }
+  };
+}
+function normalizeBabyStudioSettings(input={}){
+  const links=Array.isArray(input.importantLinks)?input.importantLinks:String(input.importantLinks||'').split('\n').map(line=>{
+    const parts=line.split('|');
+    return {label:String(parts[0]||'').trim(),url:String(parts[1]||parts[0]||'').trim()};
+  });
+  const shownCards=Array.isArray(input.shownCards)?input.shownCards:String(input.shownCards||'').split(',');
+  return {
+    babyValName:String(input.babyValName||input.name||'').trim().slice(0,120),
+    welcomeMessage:String(input.welcomeMessage||'').trim().slice(0,500),
+    accentColor:String(input.accentColor||'#C4963A').trim().slice(0,40),
+    aboutMe:String(input.aboutMe||'').trim().slice(0,4000),
+    preferredTone:String(input.preferredTone||'').trim().slice(0,1000),
+    importantLinks:links.filter(l=>l.label||l.url).slice(0,12),
+    shownCards:shownCards.map(x=>String(x||'').trim()).filter(Boolean).slice(0,20),
+    simpleInstructions:String(input.simpleInstructions||'').trim().slice(0,4000)
+  };
+}
+async function getBabyStudioSettings(){
+  const fallback={...DEFAULT_BABY_STUDIO_SETTINGS,babyValName:CLIENT_CONFIG.brandName,welcomeMessage:`Welcome back, ${CLIENT_CONFIG.clientName}.`};
+  if(DEMO_MODE) return fallback;
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery('select settings_json from baby_val_studio_settings where tenant_id=$1 and user_id=$2 limit 1',[tenantId(),currentUserId()]);
+    return {...fallback,...(r.rows[0]?.settings_json||{})};
+  }
+  const store=valStore();
+  return {...fallback,...(store.babyValStudioSettings||{})};
+}
+async function saveBabyStudioSettings(input){
+  const settings=normalizeBabyStudioSettings(input);
+  if(!settings.babyValName) throw new Error('Could not save because required field is missing: Baby VAL name.');
+  await valDbReady;
+  if(pgPool){
+    await dbQuery(`insert into baby_val_studio_settings (tenant_id,user_id,settings_json,updated_at)
+      values ($1,$2,$3,now())
+      on conflict (tenant_id,user_id) do update set settings_json=excluded.settings_json,updated_at=now()`,[tenantId(),currentUserId(),JSON.stringify(settings)]);
+    return settings;
+  }
+  if(process.env.DATABASE_URL) throw new Error('Could not save because Postgres is unavailable. In Railway, confirm your Postgres service is attached and DATABASE_URL exists in Variables.');
+  const store=valStore();store.babyValStudioSettings=settings;saveValStore(store);return settings;
+}
+async function babyStudioPromptContext(){
+  const s=await getBabyStudioSettings().catch(()=>null);
+  if(!s) return '';
+  return [
+    `Baby VAL name: ${s.babyValName||CLIENT_CONFIG.brandName}`,
+    s.aboutMe?`About the user: ${s.aboutMe}`:'',
+    s.preferredTone?`Preferred tone: ${s.preferredTone}`:'',
+    s.simpleInstructions?`Simple instructions for how Baby VAL should help: ${s.simpleInstructions}`:''
+  ].filter(Boolean).join('\n');
+}
 async function initValDb(){
   if(!pgPool) return;
   await dbQuery(`
@@ -1509,6 +2932,8 @@ async function initValDb(){
       notes text,
       details jsonb not null default '[]',
       completed boolean not null default false,
+      completed_at timestamptz,
+      completed_by text,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
@@ -1538,6 +2963,82 @@ async function initValDb(){
       metadata jsonb not null default '{}',
       created_at timestamptz not null default now()
     );
+    create table if not exists transcripts (
+      transcript_id text primary key,
+      user_id text not null default 'default',
+      tenant_id text not null default 'default',
+      source text not null default 'unknown',
+      meeting_title text,
+      meeting_datetime timestamptz,
+      calendar_event_id text,
+      raw_transcript text not null,
+      processing_status text not null default 'received',
+      summary_status text not null default 'pending',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists transcript_participants (
+      participant_id text primary key,
+      transcript_id text not null references transcripts(transcript_id) on delete cascade,
+      speaker_name_raw text,
+      matched_contact_id text,
+      matched_contact_name text,
+      matched_email text,
+      matched_phone text,
+      matched_company text,
+      match_confidence numeric not null default 0,
+      match_reason text,
+      needs_review boolean not null default true,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists transcript_summaries (
+      summary_id text primary key,
+      transcript_id text not null references transcripts(transcript_id) on delete cascade,
+      executive_summary text not null,
+      client_summary text,
+      internal_notes text,
+      key_decisions jsonb not null default '[]',
+      open_questions jsonb not null default '[]',
+      relationship_updates jsonb not null default '[]',
+      created_at timestamptz not null default now()
+    );
+    create table if not exists transcript_tasks (
+      task_id text primary key,
+      transcript_id text not null references transcripts(transcript_id) on delete cascade,
+      assigned_to_contact_id text,
+      assigned_to_name text,
+      task_title text not null,
+      task_description text,
+      due_date timestamptz,
+      priority text not null default 'medium',
+      confidence numeric not null default 0,
+      status text not null default 'staged',
+      needs_approval boolean not null default true,
+      source_quote text not null,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists transcript_contact_updates (
+      update_id text primary key,
+      transcript_id text not null references transcripts(transcript_id) on delete cascade,
+      contact_id text,
+      field_to_update text not null,
+      old_value text,
+      new_value text,
+      reason text,
+      source_quote text not null,
+      confidence numeric not null default 0,
+      approved boolean not null default false,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists transcript_action_log (
+      action_id text primary key,
+      transcript_id text not null references transcripts(transcript_id) on delete cascade,
+      action_type text not null,
+      target_record_id text,
+      status text not null,
+      error_message text,
+      created_at timestamptz not null default now()
+    );
     create table if not exists val_memory_items (
       id text primary key,
       user_id text not null default 'default',
@@ -1546,6 +3047,51 @@ async function initValDb(){
       raw_text text not null,
       importance integer not null default 1,
       metadata jsonb not null default '{}',
+      created_at timestamptz not null default now()
+    );
+    create table if not exists baby_val_studio_settings (
+      tenant_id text not null default 'default',
+      user_id text not null default 'default',
+      settings_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      primary key (tenant_id,user_id)
+    );
+    create table if not exists teach_val_onboarding_sessions (
+      id text primary key,
+      tenant_id text not null default 'default',
+      user_id text not null default 'default',
+      status text not null default 'draft',
+      state_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists teach_val_imports (
+      id text primary key,
+      session_id text not null references teach_val_onboarding_sessions(id) on delete cascade,
+      tenant_id text not null default 'default',
+      user_id text not null default 'default',
+      category text not null,
+      prompt_used text,
+      raw_response text,
+      structured_json jsonb not null default '{}',
+      items_json jsonb not null default '[]',
+      reviewed boolean not null default false,
+      status text not null default 'Waiting for Paste',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists teach_val_memory_items (
+      id text primary key,
+      session_id text not null references teach_val_onboarding_sessions(id) on delete cascade,
+      tenant_id text not null default 'default',
+      user_id text not null default 'default',
+      category text not null,
+      title text,
+      summary text,
+      source text not null default 'teach_val_onboarding',
+      confidence numeric not null default 0.72,
+      data_json jsonb not null default '{}',
       created_at timestamptz not null default now()
     );
     create table if not exists val_oauth_tokens (
@@ -1567,6 +3113,20 @@ async function initValDb(){
       source_context_json jsonb not null default '{}',
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
+    );
+    create table if not exists val_templates (
+      id text primary key,
+      user_id text not null default 'default',
+      tenant_id text not null default 'default',
+      template_key text not null,
+      name text not null,
+      subject_template text not null default '',
+      html_template text not null default '',
+      text_template text not null default '',
+      is_active boolean not null default true,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id,user_id,template_key)
     );
     create table if not exists meeting_transcript_links (
       id text primary key,
@@ -1593,6 +3153,28 @@ async function initValDb(){
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     );
+    create table if not exists val_task_calendar_blocks (
+      id text primary key,
+      task_id text not null,
+      user_id text not null default 'default',
+      tenant_id text not null default 'default',
+      scheduled_start timestamptz,
+      scheduled_end timestamptz,
+      calendar_provider text,
+      calendar_id text,
+      calendar_event_id text,
+      estimated_duration_minutes integer not null default 45,
+      source_type text,
+      source_id text,
+      related_transcript_id text,
+      related_email_id text,
+      related_contact_id text,
+      scheduling_status text not null default 'unscheduled',
+      settings_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id,user_id,task_id)
+    );
     create table if not exists val_users (
       id text primary key,
       client_slug text not null default 'default',
@@ -1611,8 +3193,155 @@ async function initValDb(){
       id text primary key,
       user_id text references val_users(id) on delete cascade,
       client_slug text not null default 'default',
+      tenant_id text not null default 'default',
+      ip_address text,
+      user_agent text,
+      last_active_at timestamptz not null default now(),
       expires_at timestamptz not null,
       created_at timestamptz not null default now()
+    );
+    create table if not exists security_audit_logs (
+      id text primary key,
+      tenant_id text not null default 'default',
+      user_id text,
+      action text not null,
+      resource_type text,
+      resource_id text,
+      ip_address text,
+      user_agent text,
+      metadata jsonb not null default '{}',
+      success boolean not null default true,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists tenant_support_access (
+      tenant_id text primary key,
+      support_access_enabled boolean not null default false,
+      support_access_expires_at timestamptz,
+      support_access_granted_by text,
+      support_access_reason text,
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists tenant_feature_flags (
+      id text primary key,
+      tenant_id text not null default 'default',
+      feature_key text not null,
+      enabled boolean not null default false,
+      config_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id,feature_key)
+    );
+    create table if not exists dashboard_change_requests (
+      id text primary key,
+      tenant_id text not null default 'default',
+      requested_by_user_id text,
+      request_text text not null,
+      classification text not null default 'requested',
+      status text not null default 'requested',
+      risk_level text not null default 'low',
+      branch_name text,
+      pr_url text,
+      pr_number integer,
+      implementation_plan text,
+      error_message text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists dashboard_update_requests (
+      id text primary key,
+      tenant_id text not null default 'default',
+      requested_by_user_id text,
+      request_text text not null,
+      classification text not null default 'needs_clarification',
+      classification_reason text,
+      risk_level text not null default 'low',
+      status text not null default 'requested',
+      policy_category text,
+      affects_current_tenant_only boolean not null default true,
+      requires_new_variables boolean not null default false,
+      missing_variables jsonb not null default '[]',
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists premium_update_requests (
+      id text primary key,
+      tenant_id text not null default 'default',
+      requested_by_user_id text,
+      user_name text,
+      user_email text,
+      request_text text not null,
+      classification_reason text,
+      risk_level text not null default 'high',
+      requested_function text,
+      status text not null default 'pending',
+      admin_notes text,
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists deployment_history (
+      id text primary key,
+      tenant_id text not null default 'default',
+      request_id text,
+      request_type text,
+      status text not null default 'created',
+      classification text,
+      summary text,
+      rollback_reference text,
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists tenant_dashboard_studio_overrides (
+      id text primary key,
+      tenant_id text not null default 'default',
+      active_deployment_id text,
+      config_json jsonb not null default '{}',
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id)
+    );
+    create table if not exists tenant_environment_variables_metadata (
+      id text primary key,
+      tenant_id text not null default 'default',
+      variable_name text not null,
+      status text not null default 'missing',
+      required_for text,
+      admin_only boolean not null default true,
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id,variable_name)
+    );
+    create table if not exists tenant_provider_approvals (
+      id text primary key,
+      tenant_id text not null default 'default',
+      provider text not null,
+      status text not null default 'missing_approval',
+      approved_by_user_id text,
+      notes text,
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id,provider)
+    );
+    create table if not exists tenant_api_keys (
+      id text primary key,
+      tenant_id text not null default 'default',
+      provider text not null,
+      encrypted_secret text not null,
+      key_preview text,
+      status text not null default 'saved',
+      last_tested_at timestamptz,
+      last_updated_at timestamptz not null default now(),
+      created_by_user_id text,
+      updated_by_user_id text,
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (tenant_id,provider)
     );
     create table if not exists user_integration_credentials (
       id text primary key,
@@ -1662,17 +3391,147 @@ async function initValDb(){
       details_json jsonb not null default '{}',
       created_at timestamptz not null default now()
     );
+    create table if not exists book_projects (
+      id text primary key,
+      owner_user_id text not null default 'default',
+      tenant_id text not null default 'default',
+      title text not null,
+      master_doc_id text,
+      reading_copy_doc_id text,
+      current_chapter_id text,
+      status text not null default 'active',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists book_chapters (
+      id text primary key,
+      book_project_id text not null references book_projects(id) on delete cascade,
+      chapter_number integer,
+      chapter_title text,
+      google_doc_section_marker text,
+      start_index integer,
+      body_start_index integer,
+      end_index integer,
+      current_text text,
+      status text not null default 'draft',
+      last_synced_at timestamptz
+    );
+    create table if not exists editor_notes (
+      id text primary key,
+      chapter_id text references book_chapters(id) on delete cascade,
+      note_type text,
+      note_text text not null,
+      priority text not null default 'normal',
+      status text not null default 'open',
+      created_at timestamptz not null default now()
+    );
+    create table if not exists michele_feedback (
+      id text primary key,
+      chapter_id text references book_chapters(id) on delete cascade,
+      editor_note_id text,
+      michele_response text not null,
+      interpreted_instruction text,
+      sentiment text,
+      created_at timestamptz not null default now()
+    );
+    create table if not exists chapter_versions (
+      id text primary key,
+      chapter_id text references book_chapters(id) on delete cascade,
+      version_number integer not null,
+      full_text text not null,
+      change_summary text,
+      source text not null default 'snapshot',
+      created_at timestamptz not null default now()
+    );
+    create table if not exists author_voice_profile (
+      id text primary key,
+      book_project_id text not null references book_projects(id) on delete cascade,
+      voice_summary text,
+      preferred_style jsonb not null default '[]',
+      avoid_style jsonb not null default '[]',
+      favorite_phrases jsonb not null default '[]',
+      rejected_phrases jsonb not null default '[]',
+      accepted_patterns jsonb not null default '[]',
+      rejected_patterns jsonb not null default '[]',
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists rewrite_jobs (
+      id text primary key,
+      chapter_id text references book_chapters(id) on delete cascade,
+      michele_feedback_id text,
+      status text not null default 'queued',
+      instruction text,
+      before_text text,
+      after_text text,
+      change_summary text,
+      error_message text,
+      created_at timestamptz not null default now(),
+      completed_at timestamptz
+    );
+    create table if not exists book_conversation_sessions (
+      id text primary key,
+      book_project_id text not null references book_projects(id) on delete cascade,
+      chapter_id text references book_chapters(id) on delete set null,
+      user_id text not null default 'default',
+      tenant_id text not null default 'default',
+      status text not null default 'active',
+      mode text not null default 'interview',
+      current_goal text,
+      last_question text,
+      questions_asked jsonb not null default '[]',
+      story_beats jsonb not null default '[]',
+      emotional_threads jsonb not null default '[]',
+      scene_details jsonb not null default '[]',
+      humor_threads jsonb not null default '[]',
+      reader_takeaways jsonb not null default '[]',
+      rewrite_direction text,
+      readiness_score integer not null default 0,
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+    create table if not exists book_conversation_turns (
+      id text primary key,
+      session_id text not null references book_conversation_sessions(id) on delete cascade,
+      role text not null,
+      content text not null,
+      input_type text not null default 'text',
+      metadata_json jsonb not null default '{}',
+      created_at timestamptz not null default now()
+    );
     create index if not exists val_tasks_user_completed_idx on val_tasks(user_id,completed,due_date);
     create index if not exists val_messages_conversation_idx on val_messages(conversation_id,created_at);
+    create index if not exists tenant_feature_flags_tenant_idx on tenant_feature_flags(tenant_id,feature_key);
+    create index if not exists dashboard_change_requests_tenant_idx on dashboard_change_requests(tenant_id,created_at desc);
+    create index if not exists tenant_dashboard_studio_overrides_tenant_idx on tenant_dashboard_studio_overrides(tenant_id,active_deployment_id);
+    create index if not exists teach_val_sessions_lookup_idx on teach_val_onboarding_sessions(tenant_id,user_id,updated_at desc);
+    create index if not exists teach_val_imports_lookup_idx on teach_val_imports(tenant_id,user_id,session_id,category);
+    create index if not exists teach_val_memory_lookup_idx on teach_val_memory_items(tenant_id,user_id,category,created_at desc);
+    create index if not exists tenant_api_keys_lookup_idx on tenant_api_keys(tenant_id,provider,status);
+    create index if not exists tenant_provider_approvals_lookup_idx on tenant_provider_approvals(tenant_id,provider,status);
     create index if not exists val_transcripts_user_created_idx on val_transcripts(user_id,created_at desc);
+    create index if not exists transcripts_user_created_idx on transcripts(user_id,created_at desc);
+    create index if not exists transcript_participants_transcript_idx on transcript_participants(transcript_id,needs_review);
+    create index if not exists transcript_tasks_transcript_idx on transcript_tasks(transcript_id,needs_approval,status);
+    create index if not exists transcript_updates_transcript_idx on transcript_contact_updates(transcript_id,approved);
+    create index if not exists transcript_action_log_transcript_idx on transcript_action_log(transcript_id,created_at);
     create index if not exists val_memory_user_created_idx on val_memory_items(user_id,created_at desc);
     create index if not exists val_sessions_user_expires_idx on val_sessions(user_id,expires_at);
+    create index if not exists security_audit_logs_lookup_idx on security_audit_logs(tenant_id,created_at desc,action);
     create index if not exists user_integration_credentials_lookup_idx on user_integration_credentials(tenant_id,user_id,provider,credential_type);
     create index if not exists email_rules_lookup_idx on email_rules(tenant_id,user_id,is_active,rule_type);
     create index if not exists email_action_log_lookup_idx on email_action_log(tenant_id,user_id,action_type,created_at desc);
+    create index if not exists book_projects_lookup_idx on book_projects(tenant_id,owner_user_id,status);
+    create index if not exists book_chapters_project_idx on book_chapters(book_project_id,chapter_number);
+    create index if not exists chapter_versions_chapter_idx on chapter_versions(chapter_id,version_number desc);
+    create index if not exists rewrite_jobs_chapter_idx on rewrite_jobs(chapter_id,created_at desc);
+    create index if not exists book_conversation_sessions_lookup_idx on book_conversation_sessions(tenant_id,user_id,book_project_id,chapter_id,status,updated_at desc);
+    create index if not exists book_conversation_turns_session_idx on book_conversation_turns(session_id,created_at);
     create index if not exists drafts_lookup_idx on drafts(tenant_id,user_id,status,created_at desc);
+    create index if not exists val_templates_lookup_idx on val_templates(tenant_id,user_id,template_key,is_active);
     create index if not exists meeting_transcript_links_lookup_idx on meeting_transcript_links(tenant_id,user_id,meeting_event_id,created_at desc);
     create index if not exists val_calendar_events_lookup_idx on val_calendar_events(tenant_id,user_id,start_time desc);
+    create index if not exists val_task_calendar_blocks_lookup_idx on val_task_calendar_blocks(tenant_id,user_id,scheduling_status,scheduled_start);
   `);
   for(const table of ['val_tasks','val_conversations','val_transcripts','val_memory_items','val_oauth_tokens']){
     await dbQuery(`alter table ${table} add column if not exists client_slug text not null default 'default'`);
@@ -1686,6 +3545,12 @@ async function initValDb(){
   await dbQuery('alter table val_users add column if not exists password_reset_expires_at timestamptz');
   await dbQuery('alter table meeting_transcript_links add column if not exists contact_id text');
   await dbQuery('alter table meeting_transcript_links add column if not exists updated_at timestamptz not null default now()');
+  await dbQuery('alter table val_tasks add column if not exists completed_at timestamptz');
+  await dbQuery('alter table val_tasks add column if not exists completed_by text');
+  await dbQuery('alter table val_sessions add column if not exists tenant_id text not null default \'default\'');
+  await dbQuery('alter table val_sessions add column if not exists ip_address text');
+  await dbQuery('alter table val_sessions add column if not exists user_agent text');
+  await dbQuery('alter table val_sessions add column if not exists last_active_at timestamptz not null default now()');
   await seedAdminUser();
   console.log('VAL Postgres store ready');
 }
@@ -1830,6 +3695,7 @@ function clientIsolationWarnings(){
   if(!process.env.VAL_CLIENT_BRAND_NAME) warnings.push('VAL_CLIENT_BRAND_NAME is missing. Dashboard may show generic brand identity.');
   if(process.env.VAL_PUBLIC_BASE_URL && process.env.VAL_PUBLIC_BASE_URL!==CLIENT_CONFIG.publicBaseUrl) warnings.push(`VAL_PUBLIC_BASE_URL was normalized from "${process.env.VAL_PUBLIC_BASE_URL}" to "${CLIENT_CONFIG.publicBaseUrl}". Fix the Railway variable.`);
   if(!process.env.DATABASE_URL) warnings.push('DATABASE_URL is missing. Deployment will use temporary file storage and is not safe for production.');
+  if(!encryptionConfigured()) warnings.push('ENCRYPTION_KEY is missing. OAuth tokens and integration secrets cannot be encrypted for new saves in production. Accepted variable names: ENCRYPTION_KEY, VAL_ENCRYPTION_KEY, ENCRYPTION_SECRET.');
   if(CLIENT_CONFIG.clientSlug==='val-core') warnings.push('Client slug is still val-core. This is unsafe for production client isolation.');
   if(process.env.GOOGLE_REFRESH_TOKEN) warnings.push('GOOGLE_REFRESH_TOKEN is set. Remove it from Railway and reconnect Google through the dashboard so OAuth is tenant/user scoped.');
   return warnings;
@@ -1846,6 +3712,8 @@ function statusPayload(){
       ghlConfigured:!!(GHL_KEY&&GHL_LOC),
       ghlMissing:[GHL_KEY?'':'GHL_KEY/GHL_API_KEY',GHL_LOC?'':'GHL_LOC/GHL_LOCATION_ID'].filter(Boolean),
       openAiConfigured:!!OPENAI_KEY,
+      openAiRuntimeFallbackAllowed:platformKeyFallbackAllowed('openai'),
+      openAiTenantKeyRequired:/^(1|true|yes)$/i.test(String(process.env.VAL_REQUIRE_TENANT_OPENAI_KEY||'')),
       databaseConfigured:!!process.env.DATABASE_URL,
       googleConfigured:!!(GOOGLE_CLIENT_ID&&GOOGLE_CLIENT_SECRET),
       microsoftConfigured:!!(MICROSOFT_CLIENT_ID&&MICROSOFT_CLIENT_SECRET&&MICROSOFT_REDIRECT_URI),
@@ -1853,6 +3721,13 @@ function statusPayload(){
       ghlCalendarCount:GHL_CALENDAR_IDS.length,
       ghlAccountCount:configuredGhlAccounts().length,
       ghlAccounts:configuredGhlAccounts().map(a=>({slug:a.slug,label:a.label,locationId:a.locationId,calendarCount:a.calendarIds.length})),
+      leadSearchMax:GOALL_LEAD_SEARCH_MAX,
+      leadPerSearchMax:GOALL_LEAD_PER_SEARCH_MAX,
+      leadIndustriesPerRun:GOALL_LEAD_INDUSTRIES_PER_RUN,
+      leadMixedJobConcurrency:GOALL_LEAD_MIXED_JOB_CONCURRENCY,
+      leadOpportunityStage:GHL_OPPORTUNITY_STAGE_NAME,
+      rocketReachEnrichBatchMax:ROCKETREACH_ENRICH_BATCH_MAX,
+      leadContactValidation:'strict-v2',
       demoMode:DEMO_MODE
     }
   };
@@ -1863,6 +3738,7 @@ app.get('/',async(req,res)=>{
   await valDbReady;
   const user=await getSessionUser(req);
   if(!user) return res.type('html').send(loginHtml());
+  res.set('Cache-Control','no-store, max-age=0');
   return res.sendFile(path.join(__dirname,'dashboard.html'));
 });
 app.get('/api/health',(req,res)=>res.json(statusPayload()));
@@ -1882,12 +3758,13 @@ app.post('/api/auth/login',async(req,res)=>{
   const email=String(req.body.email||'').trim().toLowerCase();
   authLog('login requested',{email});
   const user=await findUserByEmail(email);
-  if(!user){authLog('login failed: unknown email',{email});return res.status(401).json({ok:false,error:'Invalid email or password'});}
+  if(!user){authLog('login failed: unknown email',{email});await auditLog({req,tenantId:tenantId(),userId:'',action:'login',resourceType:'user',metadata:{email,reason:'unknown_email'},success:false}).catch(()=>{});return res.status(401).json({ok:false,error:'Invalid email or password'});}
   if(!user.passwordHash){authLog('login requires password setup',{email,userId:user.id});return res.status(403).json({ok:false,requiresPasswordSetup:true,message:'Password setup required'});}
-  if(!(await verifyPassword(req.body.password,user.passwordHash))){authLog('login failed: bad password',{email,userId:user.id});return res.status(401).json({ok:false,error:'Invalid email or password'});}
-  const sessionId=await createSession(user.id);
+  if(!(await verifyPassword(req.body.password,user.passwordHash))){authLog('login failed: bad password',{email,userId:user.id});await auditLog({req,tenantId:tenantId(),userId:user.id,action:'login',resourceType:'user',resourceId:user.id,metadata:{email,reason:'bad_password'},success:false}).catch(()=>{});return res.status(401).json({ok:false,error:'Invalid email or password'});}
+  const sessionId=await createSession(user.id,req);
   setSessionCookie(res,sessionId);
   authLog('login succeeded',{email,userId:user.id});
+  await auditLog({req,tenantId:tenantId(),userId:user.id,action:'login',resourceType:'user',resourceId:user.id,metadata:{email},success:true}).catch(()=>{});
   res.json({ok:true,user:publicUser(user),redirectUrl:'/dashboard'});
 });
 app.post('/api/auth/request-password-setup',async(req,res)=>{
@@ -1918,12 +3795,14 @@ app.post('/api/auth/set-password',async(req,res)=>{
   const user=await findUserByPasswordSetupToken(token);
   if(!user){authLog('set password failed: invalid or expired token',{tokenHashPrefix:hashPasswordSetupToken(token).slice(0,10)});return res.status(400).json({ok:false,error:'Invalid or expired setup link'});}
   await setUserPassword(user.id,await hashPassword(password));
-  const sessionId=await createSession(user.id);
+  const sessionId=await createSession(user.id,req);
   setSessionCookie(res,sessionId);
   authLog('set password succeeded',{email:user.email,userId:user.id});
+  await auditLog({req,tenantId:tenantId(),userId:user.id,action:'login',resourceType:'user',resourceId:user.id,metadata:{method:'set_password'},success:true}).catch(()=>{});
   res.json({ok:true,user:publicUser(user),redirectUrl:'/dashboard'});
 });
 app.post('/api/auth/logout',async(req,res)=>{
+  await auditLog({req,action:'logout',resourceType:'session',resourceId:verifySignedSession(parseCookies(req)[SESSION_COOKIE])||'',success:true}).catch(()=>{});
   await destroySession(req);
   clearSessionCookie(res);
   res.json({ok:true});
@@ -1935,9 +3814,255 @@ app.get('/api/auth/me',async(req,res)=>{
   res.status(user?200:401).json(user?{ok:true,user}:{ok:false,error:'Authentication required'});
 });
 app.use(requireAuth);
-app.get('/api/config',(req,res)=>res.json({...CLIENT_CONFIG,demoMode:DEMO_MODE,signupUrl:VAL_SIGNUP_URL,ghlAccounts:configuredGhlAccounts().map(a=>({slug:a.slug,label:a.label,locationId:a.locationId,calendarCount:a.calendarIds.length})),microsoftConfigured:!!(MICROSOFT_CLIENT_ID&&MICROSOFT_CLIENT_SECRET&&MICROSOFT_REDIRECT_URI)}));
+app.get('/api/config',async(req,res)=>{
+  const studioOverride=await getTenantDashboardStudioOverride().catch(()=>null);
+  const babyStudio=await getBabyStudioSettings().catch(()=>null);
+  const configuredName=babyStudio?.babyValName||CLIENT_CONFIG.brandName;
+  res.json({...CLIENT_CONFIG,brandName:configuredName,demoMode:DEMO_MODE,signupUrl:VAL_SIGNUP_URL,ghlAccounts:configuredGhlAccounts().map(a=>({slug:a.slug,label:a.label,locationId:a.locationId,calendarCount:a.calendarIds.length})),microsoftConfigured:!!(MICROSOFT_CLIENT_ID&&MICROSOFT_CLIENT_SECRET&&MICROSOFT_REDIRECT_URI),googleOAuth:googleOAuthConfigSnapshot(),featureFlags:{dashboard_studio_beta:await dashboardStudioFeatureEnabled(req).catch(()=>false)},dashboardStudioOverrides:studioOverride?.config||{},babyValStudioSettings:babyStudio||null,dashboardStudioDeployment:{activeDeploymentId:studioOverride?.activeDeploymentId||'',updatedAt:studioOverride?.updatedAt||''}});
+});
 app.get('/api/config/status',(req,res)=>res.json(statusPayload()));
+app.get('/api/setup-health',async(req,res)=>{
+  const payload=setupHealthPayload();
+  const [google,microsoft]=await Promise.all([
+    getGoogleConnectionStatus(GOOGLE_SCOPES).catch(e=>({connected:false,error:e.message,missingScopes:GOOGLE_SCOPES})),
+    loadOAuthTokens('microsoft').catch(()=>null)
+  ]);
+  payload.google.connected=!!google.connected;
+  payload.google.error=google.error||'';
+  payload.google.missingScopes=google.missingScopes||[];
+  payload.microsoft.connected=!!microsoft?.refresh_token;
+  res.json(payload);
+});
+app.get('/api/baby-val-studio/settings',async(req,res)=>{
+  try{res.json({ok:true,settings:await getBabyStudioSettings()});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/baby-val-studio/settings',async(req,res)=>{
+  try{res.json({ok:true,settings:await saveBabyStudioSettings(req.body||{}),message:'Saved'});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/teach-val/onboarding',async(req,res)=>{
+  try{res.json(await teachValStateResponse(req.query.sessionId||''));}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/teach-val/onboarding/start',async(req,res)=>{
+  try{
+    const existing=req.body.resume!==false?await getTeachValSession(req.body.sessionId||''):null;
+    const session=existing||await saveTeachValSession({id:uuid('tvo'),tenantId:tenantId(),userId:currentUserId(),status:'draft',state:{...teachValDefaultState(),stage:'voice_interview',testMode:req.body.testMode!==false},createdAt:new Date().toISOString()});
+    const state=normalizeTeachValState(session.state);
+    state.stage=state.stage==='welcome'?'voice_interview':state.stage;
+    state.progress.welcome='Reviewed';
+    state.progress.voice_interview=state.progress.voice_interview==='Not Started'?'Waiting for Paste':state.progress.voice_interview;
+    session.state=state;
+    await saveTeachValSession(session);
+    res.json(await teachValStateResponse(session.id));
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.patch('/api/teach-val/onboarding/:id',async(req,res)=>{
+  try{
+    const session=await getTeachValSession(req.params.id);
+    if(!session)return res.status(404).json({ok:false,error:'Teach VAL onboarding session not found.'});
+    session.state=normalizeTeachValState({...session.state,...(req.body.state||{})});
+    if(req.body.stage)session.state.stage=String(req.body.stage);
+    if(req.body.testMode!==undefined)session.state.testMode=!!req.body.testMode;
+    await saveTeachValSession(session);
+    res.json(await teachValStateResponse(session.id));
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/teach-val/onboarding/:id/interview',async(req,res)=>{
+  try{
+    const session=await getTeachValSession(req.params.id);
+    if(!session)return res.status(404).json({ok:false,error:'Teach VAL onboarding session not found.'});
+    const transcript=String(req.body.transcript||'').trim();
+    if(!transcript)return res.status(400).json({ok:false,error:'Add the voice interview transcript before saving this stage.'});
+    const summary=req.body.summary&&typeof req.body.summary==='object'?req.body.summary:await summarizeTeachValInterview(transcript);
+    const state=normalizeTeachValState(session.state);
+    state.voiceInterview={transcript,summary,duration:req.body.duration||null,status:'Imported'};
+    state.progress.voice_interview='Imported';
+    state.stage='current_projects';
+    session.state=state;
+    await saveTeachValSession(session);
+    await saveTeachValImport({sessionId:session.id,category:'voice_interview',promptUsed:TEACH_VAL_VOICE_PROMPT,rawResponse:transcript,structuredSummary:summary,extractedItems:[],reviewed:true,status:'Imported'});
+    res.json(await teachValStateResponse(session.id));
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/teach-val/onboarding/:id/imports/:category',async(req,res)=>{
+  try{
+    const session=await getTeachValSession(req.params.id);
+    if(!session)return res.status(404).json({ok:false,error:'Teach VAL onboarding session not found.'});
+    const category=String(req.params.category||'').trim();
+    const card=teachValCardFor(category);
+    if(!card)return res.status(404).json({ok:false,error:'Knowledge Card not found.'});
+    const rawResponse=String(req.body.rawResponse||req.body.raw_response||'').trim();
+    if(!rawResponse)return res.status(400).json({ok:false,error:'Paste the response from ChatGPT or Claude before saving this card.'});
+    const promptUsed=String(req.body.promptUsed||card.prompt);
+    const structured=await extractTeachValKnowledge({category,rawResponse,promptUsed});
+    const existing=(await listTeachValImports(session.id)).find(i=>i.category===category);
+    await saveTeachValImport({id:existing?.id,sessionId:session.id,category,promptUsed,rawResponse,structuredSummary:structured.summary||{},extractedItems:structured.items||[],reviewed:false,status:'Imported'});
+    const state=normalizeTeachValState(session.state);
+    state.progress[category]='Imported';
+    state.stage=category;
+    session.state=state;
+    await saveTeachValSession(session);
+    res.json(await teachValStateResponse(session.id));
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.patch('/api/teach-val/onboarding/:id/imports/:importId/items/:itemId',async(req,res)=>{
+  try{
+    const session=await getTeachValSession(req.params.id);
+    if(!session)return res.status(404).json({ok:false,error:'Teach VAL onboarding session not found.'});
+    const target=(await listTeachValImports(session.id)).find(i=>i.id===req.params.importId);
+    if(!target)return res.status(404).json({ok:false,error:'Knowledge Card import not found.'});
+    target.extractedItems=(target.extractedItems||[]).map(item=>String(item.id)===String(req.params.itemId)?{...item,include_in_val:req.body.include_in_val!==false}:item);
+    target.reviewed=true;
+    target.status='Reviewed';
+    await saveTeachValImport(target);
+    const state=normalizeTeachValState(session.state);
+    state.progress[target.category]='Reviewed';
+    session.state=state;
+    await saveTeachValSession(session);
+    res.json(await teachValStateResponse(session.id));
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/teach-val/onboarding/:id/commit',async(req,res)=>{
+  try{
+    const session=await getTeachValSession(req.params.id);
+    if(!session)return res.status(404).json({ok:false,error:'Teach VAL onboarding session not found.'});
+    const imports=await listTeachValImports(session.id);
+    const included=imports.flatMap(i=>(i.extractedItems||[]).filter(item=>item.include_in_val!==false).map(item=>({
+      sessionId:session.id,
+      category:item.category||i.category,
+      title:item.title||item.name||i.category,
+      summary:item.summary||'',
+      source:item.source||'teach_val_onboarding',
+      confidence:Number(item.confidence||0.72),
+      data:{...item.data,itemId:item.id,importId:i.id,promptUsed:i.promptUsed,sourceCategory:i.category}
+    })));
+    const testMode=req.body.testMode!==undefined?!!req.body.testMode:!!session.state.testMode;
+    const payload=teachValCompiledPayload({session,imports,items:included,testMode});
+    const state=normalizeTeachValState(session.state);
+    let webhook={status:testMode?'test_mode':'not_configured',message:testMode?'Test mode: payload built but not sent to production memory.':'No external onboarding webhook configured. Stored in local VAL onboarding memory.'};
+    if(!testMode){
+      await insertTeachValMemoryItems(included);
+      const url=process.env.TEACH_VAL_WEBHOOK_URL||process.env.VAL_ONBOARDING_WEBHOOK_URL||'';
+      if(url){
+        try{
+          const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+          const body=await readJsonResponse(r).catch(()=>({}));
+          webhook={status:r.ok?'sent':'failed',statusCode:r.status,message:r.ok?'Webhook sent successfully.':(body.error||body.message||`Webhook failed with status ${r.status}`)};
+          if(!r.ok) throw new Error(webhook.message);
+        }catch(e){
+          webhook={status:'failed',message:e.message};
+          state.lastError='Webhook failed: '+e.message;
+          state.webhookAttempts=(state.webhookAttempts||[]).concat({at:new Date().toISOString(),status:'failed',message:e.message});
+          session.state=state;await saveTeachValSession(session);
+          return res.status(502).json({ok:false,error:'Teach VAL could not send the onboarding webhook. '+e.message,payload,webhook});
+        }
+      }
+    }
+    state.stage='complete';
+    state.progress.review='Reviewed';
+    state.progress.send_to_val=testMode?'Tested':'Sent to VAL';
+    state.webhookAttempts=(state.webhookAttempts||[]).concat({at:new Date().toISOString(),...webhook});
+    session.status=testMode?'test_completed':'committed';
+    session.state=state;
+    await saveTeachValSession(session);
+    await auditLog({req,action:testMode?'teach_val_onboarding_tested':'teach_val_onboarding_committed',resourceType:'teach_val_onboarding',resourceId:session.id,metadata:{itemCount:included.length,webhook:webhook.status},success:webhook.status!=='failed'}).catch(()=>{});
+    res.json({ok:true,payload,webhook,memory:testMode?[]:await listTeachValMemory(session.id),state});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 app.post('/api/demo/reset',(req,res)=>res.json({ok:true,demo:true,state:resetDemoState(req,res)}));
+app.get('/api/dashboard-studio',requireDashboardStudioAccess,async(req,res)=>{
+  try{
+    await auditLog({req,action:'dashboard_studio_opened',resourceType:'dashboard_studio',success:true}).catch(()=>{});
+    res.json({ok:true,featureFlag:'dashboard_studio_beta',enabled:true,safetyNotice:'Dashboard Studio is policy-governed. UX, copy, layout, prompt tuning, and existing workflow fixes may be eligible for tenant-only auto-deploy after preflight. New integrations, new secrets, new APIs, cost/compliance risk, or cross-tenant changes become premium requests for Jessa/admin review.',approvalPhrase:'Jessa says deploy',policy:DASHBOARD_STUDIO_UPDATE_POLICY,github:{available:false,todo:'Code pushes are not wired to Dashboard Studio. Phase 3 safe deploy activates tenant-only configuration overrides.'},deploymentStatus:await tenantDashboardStudioDeploymentStatus(),requests:await listDashboardStudioRequests(60),premiumRequests:await listPremiumUpdateRequests(30),deploymentHistory:await listDeploymentHistory(30),pendingVariables:await listTenantEnvironmentVariableMetadata(100)});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/dashboard-studio/deployments/status',requireDashboardStudioAccess,requirePermission('dashboard_studio:approve_change'),async(req,res)=>{
+  try{res.json({ok:true,deploymentStatus:await tenantDashboardStudioDeploymentStatus()});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/dashboard-studio/deployments/:id/rollback',requireDashboardStudioAccess,requirePermission('dashboard_studio:approve_change'),async(req,res)=>{
+  try{
+    const rollback=await rollbackDashboardStudioDeployment(req,{deploymentId:req.params.id});
+    res.json({ok:true,rollback,deploymentStatus:await tenantDashboardStudioDeploymentStatus(),requests:await listDashboardStudioRequests(60),premiumRequests:await listPremiumUpdateRequests(30),deploymentHistory:await listDeploymentHistory(30),pendingVariables:await listTenantEnvironmentVariableMetadata(100)});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.post('/api/dashboard-studio/requests',requireDashboardStudioAccess,async(req,res)=>{
+  try{
+    const text=String(req.body.requestText||req.body.request||req.body.text||'').trim();
+    if(!text) return res.status(400).json({ok:false,error:'Describe the dashboard change you want.'});
+    if(dashboardStudioApprovalPhrase(text)){
+      if(!DEMO_MODE&&!userHasPermission(req.valUser,'dashboard_studio:approve_change')) return res.status(403).json({ok:false,error:'Permission denied'});
+      const request=await approveDashboardStudioRequest(req,{id:req.body.requestId||'',phrase:text});
+      return res.json({ok:true,approved:true,request,requests:await listDashboardStudioRequests(60),premiumRequests:await listPremiumUpdateRequests(30),deploymentHistory:await listDeploymentHistory(30),pendingVariables:await listTenantEnvironmentVariableMetadata(100)});
+    }
+    const preview=classifyDashboardStudioRequest(text);
+    if(preview.classification==='auto_deploy'&&!DEMO_MODE&&!userHasPermission(req.valUser,'dashboard_studio:request_config_change')) return res.status(403).json({ok:false,error:'Permission denied'});
+    if(preview.classification==='needs_clarification'&&!DEMO_MODE&&!userHasPermission(req.valUser,'dashboard_studio:request_config_change')) return res.status(403).json({ok:false,error:'Permission denied'});
+    const request=await createDashboardStudioRequest(req,text);
+    res.json({ok:true,request,premiumRequest:request.premiumRequest||null,deploymentHistoryRecord:request.deploymentHistory||null,userMessage:request.userMessage||'',requests:await listDashboardStudioRequests(60),premiumRequests:await listPremiumUpdateRequests(30),deploymentHistory:await listDeploymentHistory(30),pendingVariables:await listTenantEnvironmentVariableMetadata(100)});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/dashboard-studio/requests/:id/approve',requireDashboardStudioAccess,requirePermission('dashboard_studio:approve_change'),async(req,res)=>{
+  try{
+    const request=await approveDashboardStudioRequest(req,{id:req.params.id,phrase:req.body.phrase||req.body.approvalPhrase||''});
+    res.json({ok:true,approved:true,request,requests:await listDashboardStudioRequests(60),premiumRequests:await listPremiumUpdateRequests(30),deploymentHistory:await listDeploymentHistory(30),pendingVariables:await listTenantEnvironmentVariableMetadata(100)});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.get('/api/dashboard-studio/admin',requireDashboardStudioAccess,requirePermission('dashboard_studio:admin_review'),async(req,res)=>{
+  try{
+    res.json({ok:true,policy:DASHBOARD_STUDIO_UPDATE_POLICY,premiumRequests:await listPremiumUpdateRequests(100),deploymentHistory:await listDeploymentHistory(100),pendingVariables:await listTenantEnvironmentVariableMetadata(200),requests:await listDashboardStudioRequests(100)});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/dashboard-studio/premium-requests/:id/review',requireDashboardStudioAccess,requirePermission('dashboard_studio:admin_review'),async(req,res)=>{
+  try{
+    const premiumRequest=await reviewPremiumUpdateRequest(req,{id:req.params.id,status:req.body.status||req.body.action||'',adminNotes:req.body.adminNotes||req.body.notes||''});
+    res.json({ok:true,premiumRequest,premiumRequests:await listPremiumUpdateRequests(100),deploymentHistory:await listDeploymentHistory(100),pendingVariables:await listTenantEnvironmentVariableMetadata(200),requests:await listDashboardStudioRequests(100)});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.get('/api/security/privacy-center',requirePermission('security:view'),async(req,res)=>{
+  try{
+    await auditLog({req,action:'security_center_viewed',resourceType:'security_center',success:true}).catch(()=>{});
+    res.json(await securityCenterPayload(req));
+  }catch(e){res.status(500).json({ok:false,error:'Security center could not be loaded.'});}
+});
+app.get('/api/security/audit-log',requirePermission('audit:view'),async(req,res)=>{
+  try{res.json({ok:true,auditLogs:await listSecurityAuditLogs(Number(req.query.limit)||150)});}
+  catch(e){res.status(500).json({ok:false,error:'Audit log could not be loaded.'});}
+});
+app.post('/api/security/support-access',requirePermission('support:manage'),async(req,res)=>{
+  try{
+    const enabled=!!req.body.enabled;
+    const support=await setSupportAccess({enabled,expiresAt:req.body.expiresAt,reason:req.body.reason,grantedBy:currentUserId()});
+    await auditLog({req,action:enabled?'support_access_granted':'support_access_revoked',resourceType:'support_access',metadata:{expiresAt:support.supportAccessExpiresAt,reason:req.body.reason||''},success:true});
+    res.json({ok:true,supportAccess:support});
+  }catch(e){res.status(500).json({ok:false,error:'Support access could not be updated.'});}
+});
+app.delete('/api/security/sessions/:id',requirePermission('security:view'),async(req,res)=>{
+  try{
+    await revokeSecuritySession(req.params.id);
+    await auditLog({req,action:'session_revoked',resourceType:'session',resourceId:req.params.id,success:true});
+    res.json({ok:true});
+  }catch(e){res.status(500).json({ok:false,error:'Session could not be revoked.'});}
+});
+app.get('/api/security/export',requirePermission('data:export'),async(req,res)=>{
+  try{
+    const payload={tenantId:tenantId(),exportedAt:new Date().toISOString(),user:req.valUser,tasks:await loadTasks().catch(()=>[]),drafts:await listDrafts().catch(()=>[]),templates:[await loadTemplate(MEETING_RECAP_TEMPLATE_KEY).catch(()=>null)].filter(Boolean),auditLogs:await listSecurityAuditLogs(250).catch(()=>[])};
+    await auditLog({req,action:'data_export_created',resourceType:'tenant_export',metadata:{sections:Object.keys(payload)},success:true});
+    res.setHeader('Content-Disposition',`attachment; filename="${tenantId()}-val-export.json"`);
+    res.json(payload);
+  }catch(e){res.status(500).json({ok:false,error:'Data export could not be created.'});}
+});
+app.delete('/api/security/delete-my-data',requirePermission('data:delete'),async(req,res)=>{
+  try{
+    await auditLog({req,action:'data_delete_requested',resourceType:'tenant',metadata:{confirmed:!!req.body?.confirmation},success:true}).catch(()=>{});
+    res.json(await purgeTenantData({req,confirmation:req.body?.confirmation}));
+  }catch(e){
+    await auditLog({req,action:'data_delete_failed',resourceType:'tenant',metadata:{reason:e.message},success:false}).catch(()=>{});
+    res.status(400).json({ok:false,error:e.message});
+  }
+});
 app.get('/api/val/transcripts/webhook',async(req,res)=>{
   try{
     const [transcripts,matched]=await Promise.all([
@@ -1951,6 +4076,49 @@ app.get('/api/val/transcripts/webhook',async(req,res)=>{
 app.post('/api/val/transcripts/ping',(req,res)=>{
   if(!isValidTranscriptWebhookReq(req)) return res.status(401).json({ok:false,live:false,error:'Invalid or missing transcript webhook token'});
   res.json({ok:true,live:true,status:'live',clientName:CLIENT_CONFIG.clientName,clientSlug:CLIENT_CONFIG.clientSlug,receivedAt:new Date().toISOString(),message:'Transcript webhook is live. Use the transcript URL for real transcript payloads.'});
+});
+app.get('/api/tenant-api-keys/providers',requirePermission('settings:manage'),async(req,res)=>{
+  try{res.json({ok:true,providers:await tenantApiKeyConnectionStatuses(),registry:TENANT_API_KEY_PROVIDER_REGISTRY,demoMode:DEMO_MODE,platformFallbackAllowed:platformKeyFallbackAllowed(),encryptionConfigured:encryptionConfigured()});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/tenant-api-keys/status',requirePermission('settings:manage'),async(req,res)=>{
+  try{res.json({ok:true,providers:await tenantApiKeyConnectionStatuses(),encryptionConfigured:encryptionConfigured(),platformFallbackAllowed:platformKeyFallbackAllowed()});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/tenant-api-keys/providers/:provider/requirements',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const provider=tenantApiKeyProvider(req.params.provider);
+    if(!provider) return res.status(404).json({ok:false,error:'Unsupported provider'});
+    const approval=await tenantProviderApproval(provider.providerId);
+    res.json({ok:true,provider,approval,requiresEncryption:true,encryptionConfigured:encryptionConfigured(),displayRules:['Never show full API keys after saving','Show status, last tested, last updated, masked preview, and updater only']});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/tenant-api-keys/:provider',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    if(DEMO_MODE) return res.json({ok:true,demo:true,key:{provider:req.params.provider,keyPreview:'••••demo',status:'connected',lastUpdatedAt:new Date().toISOString()}});
+    const key=await saveTenantApiKey(req,{provider:req.params.provider,apiKey:req.body.apiKey||req.body.key||req.body.secret,metadata:{source:'api_keys_connections_ui'}});
+    res.json({ok:true,key,providers:await tenantApiKeyConnectionStatuses()});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.delete('/api/tenant-api-keys/:provider',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    if(DEMO_MODE) return res.json({ok:true,demo:true});
+    await deleteTenantApiKey(req,req.params.provider);
+    res.json({ok:true,providers:await tenantApiKeyConnectionStatuses()});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
+});
+app.post('/api/tenant-api-keys/:provider/test',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    if(DEMO_MODE) return res.json({ok:true,status:'connected',message:`${req.params.provider} is connected in demo mode.`,demo:true});
+    const result=await testTenantApiKey(req,req.params.provider);
+    res.status(result.ok?200:400).json({...result,providers:await tenantApiKeyConnectionStatuses()});
+  }catch(e){res.status(400).json({ok:false,status:'invalid',error:e.message,providers:await tenantApiKeyConnectionStatuses().catch(()=>[])});}
+});
+app.post('/api/tenant-api-keys/providers/:provider/approval',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const approval=await approveTenantProvider(req,{provider:req.params.provider,status:req.body.status||'approved',notes:req.body.notes||''});
+    res.json({ok:true,approval,providers:await tenantApiKeyConnectionStatuses()});
+  }catch(e){res.status(400).json({ok:false,error:e.message});}
 });
 app.get('/api/integrations/credentials',async(req,res)=>{
   try{
@@ -2008,6 +4176,7 @@ app.post('/api/integrations/credentials',async(req,res)=>{
     }else{
       return res.status(400).json({ok:false,error:'Use OAuth connect buttons for Google or Microsoft'});
     }
+    await auditLog({req,action:'settings_changed',resourceType:'integration_credentials',resourceId:provider,metadata:{provider,credentialTypes:saved.map(s=>s.credentialType)},success:true}).catch(()=>{});
     res.json({ok:true,credentials:saved});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
@@ -2017,6 +4186,7 @@ app.delete('/api/integrations/credentials/:id',async(req,res)=>{
   try{
     if(DEMO_MODE) return res.json({ok:true,demo:true,message:'Demo credential reset.'});
     await deleteIntegrationCredential(req.params.id,req.valUser.id);
+    await auditLog({req,action:'settings_changed',resourceType:'integration_credentials',resourceId:req.params.id,metadata:{deleted:true},success:true}).catch(()=>{});
     res.json({ok:true});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
@@ -2032,6 +4202,11 @@ app.post('/api/integrations/test/:provider',async(req,res)=>{
       if(!key) throw new Error('OpenAI API key is missing');
       const r=await fetch('https://api.openai.com/v1/models',{headers:{Authorization:`Bearer ${key}`}});
       ok=r.ok; message=ok?'Connected':`Failed (${r.status})`;
+    }else if(provider==='anthropic'){
+      const key=await resolveAnthropicKey();
+      if(!key) throw new Error('Anthropic API key is missing');
+      const r=await fetch('https://api.anthropic.com/v1/models',{headers:{'x-api-key':key,'anthropic-version':'2023-06-01'}});
+      ok=r.ok;message=ok?'Connected':`Failed (${r.status})`;
     }else if(provider==='ghl'){
       const loc=await resolveGhlLocationId();
       const key=await resolveIntegrationSecret('ghl','api_key',GHL_KEY);
@@ -2098,6 +4273,7 @@ app.delete('/api/integrations/oauth/:provider',async(req,res)=>{
       saveValStore(store);
     }
     if(provider==='google'){ googleTokens={}; googleTokensLoaded=true; lastGoogleAuthError='Google disconnected. Reconnect required.'; }
+    await auditLog({req,action:'oauth_account_disconnected',resourceType:'oauth',resourceId:provider,metadata:{deleted},success:true}).catch(()=>{});
     res.json({ok:true,deleted});
   }catch(e){
     res.status(500).json({ok:false,error:e.message});
@@ -2217,36 +4393,41 @@ app.get('/api/integrations/health',async(req,res)=>{
     res.status(500).json({ok:false,error:e.message,errors:[e.message]});
   }
 });
-app.get('/api/email/intelligence',async(req,res)=>{
+async function emailIntelligencePayload(req,{force=false}={}){
   try{
     if(DEMO_MODE){
-      const s=demoState(req,res), emails=s.emails||[];
+      const s=requestContext.getStore()?.demoState||{emails:[]}, emails=s.emails||[];
       const buckets=emails.reduce((acc,email)=>{acc[email.classification]=(acc[email.classification]||0)+1;return acc;},{});
-      return res.json({ok:true,needsAttention:emails.filter(e=>e.classification==='needs_attention'),needsReply:emails.filter(e=>e.classification==='needs_reply'),lowPriority:[],waitingOnResponse:emails.filter(e=>e.classification==='waiting_on_response'),draftSuggestions:emails.filter(e=>['needs_reply','appointment_recap_needed'].includes(e.classification)),providers:{gmail:{status:'connected',needsAuth:false,missingScopes:[],error:''},outlook:{status:'connected',needsAuth:false,error:''}},errors:[],emails,summary:{total:emails.length,buckets,draftsPrepared:2,waitingOnResponse:1,forwardingSuggestions:0,ignoredLowPriority:0,ruleSuggestions:2,savedRules:1},rules:[{id:'demo-rule-1',ruleName:'Draft replies for investor requests',ruleType:'draft_reply',isActive:true}]});
+      return {ok:true,needsAttention:emails.filter(e=>e.classification==='needs_attention'),needsReply:emails.filter(e=>e.classification==='needs_reply'),lowPriority:[],waitingOnResponse:emails.filter(e=>e.classification==='waiting_on_response'),draftSuggestions:emails.filter(e=>['needs_reply','appointment_recap_needed'].includes(e.classification)),providers:{gmail:{status:'connected',needsAuth:false,missingScopes:[],error:'',lastSyncAt:new Date().toISOString(),lastSuccessfulSyncAt:new Date().toISOString(),recentInboxCount:emails.length,analyzedCount:emails.length},outlook:{status:'connected',needsAuth:false,error:''}},errors:[],emails,summary:{total:emails.length,buckets,draftsPrepared:2,waitingOnResponse:1,forwardingSuggestions:0,ignoredLowPriority:0,ruleSuggestions:2,savedRules:1},rules:[{id:'demo-rule-1',ruleName:'Draft replies for investor requests',ruleType:'draft_reply',isActive:true}]};
     }
+    gmailSyncStatus.lastAttemptAt=new Date().toISOString();
+    gmailSyncStatus.lastError='';
     const rules=await listEmailRules(req.valUser.id);
-    const limit=Number(req.query.limit)||20;
+    const limit=Number(req.query.limit)||30;
     const gmailStatus=await getGoogleConnectionStatus(['https://www.googleapis.com/auth/gmail.readonly']);
     const composeStatus=await getGoogleConnectionStatus(['https://www.googleapis.com/auth/gmail.compose']);
     if(!gmailStatus.connected){
-      return res.status(400).json({
+      gmailSyncStatus.lastError=gmailStatus.error||'Gmail is not connected or missing required scopes.';
+      return {
         ok:false,
         source:'gmail',
         errors:[gmailStatus.error||'Gmail is not connected or missing required scopes.'],
         missingScopes:gmailStatus.missingScopes,
         needsAttention:[],needsReply:[],waitingOnResponse:[],lowPriority:[],draftSuggestions:[],relationshipContext:[]
-      });
+      };
     }
+    const recentQuery=force?'in:inbox newer_than:2d':'in:inbox newer_than:2d';
+    const unreadQuery='in:inbox is:unread newer_than:14d';
     const [recentGmail,unreadGmail,sentGmail,outlook]=await Promise.all([
-      fetchGmailMessages({query:'newer_than:7d',maxResults:limit,includeBody:true}).catch(e=>({emails:[],needsAuth:/google auth/i.test(e.message),error:e.message,provider:'gmail'})),
-      fetchGmailMessages({query:'is:unread',maxResults:limit,includeBody:true}).catch(e=>({emails:[],needsAuth:/google auth/i.test(e.message),error:e.message,provider:'gmail'})),
+      fetchGmailMessages({query:recentQuery,maxResults:Math.max(limit,75),includeBody:true}).catch(e=>({emails:[],needsAuth:/google auth|token|permission|scope|401/i.test(e.message),error:e.message,provider:'gmail',query:recentQuery})),
+      fetchGmailMessages({query:unreadQuery,maxResults:Math.max(limit,75),includeBody:true}).catch(e=>({emails:[],needsAuth:/google auth|token|permission|scope|401/i.test(e.message),error:e.message,provider:'gmail',query:unreadQuery})),
       fetchGmailMessages({query:'in:sent newer_than:14d',maxResults:Math.max(limit,50),includeBody:true}).catch(e=>({emails:[],needsAuth:/google auth/i.test(e.message),error:e.message,provider:'gmail'})),
       fetchUnifiedOutlookEmails(limit).catch(e=>({emails:[],needsAuth:true,error:e.message,provider:'outlook'}))
     ]);
     const gmailMap=new Map();
     [...(recentGmail.emails||[]),...(unreadGmail.emails||[])].forEach(e=>gmailMap.set(e.messageId,e));
     const sentWaiting=waitingOnResponseFromSent(sentGmail.emails||[],Array.from(gmailMap.values()),3);
-    const emails=[...Array.from(gmailMap.values()),...sentWaiting,...(outlook.emails||[])].map(email=>{
+    const emails=sortEmailsNewestFirst([...Array.from(gmailMap.values()),...sentWaiting,...(outlook.emails||[])]).map(email=>{
       if(email.classification==='waiting_on_response') return email;
       const c=classifyEmail(email,rules);
       return {...email,...c,matchedRuleId:c.matchedRuleId||'',matchedContact:email.matchedContact||{}};
@@ -2257,7 +4438,10 @@ app.get('/api/email/intelligence',async(req,res)=>{
     const waitingOnResponse=emails.filter(e=>e.classification==='waiting_on_response').length;
     const forwardingSuggestions=emails.filter(e=>e.classification==='forward_to_team').length;
     const ignoredLowPriority=emails.filter(e=>['ignored','low_priority','solicitation','spam_like'].includes(e.classification)).length;
-    res.json({
+    const gmailErrors=[recentGmail.error,unreadGmail.error,sentGmail.error].filter(Boolean);
+    if(gmailErrors.length)gmailSyncStatus.lastError=gmailErrors.join('; ');
+    else{gmailSyncStatus.lastSuccessfulSyncAt=new Date().toISOString();gmailSyncStatus.lastFetchedCount=(recentGmail.emails||[]).length+(unreadGmail.emails||[]).length;gmailSyncStatus.lastAnalyzedCount=emails.length;gmailSyncStatus.lastQuery=recentQuery;}
+    return {
       ok:true,
       source:'gmail',
       needsAttention:emails.filter(e=>e.classification==='needs_attention'),
@@ -2266,15 +4450,46 @@ app.get('/api/email/intelligence',async(req,res)=>{
       waitingOnResponse:emails.filter(e=>e.classification==='waiting_on_response'),
       draftSuggestions:emails.filter(e=>e.classification==='needs_reply'||e.classification==='appointment_recap_needed'),
       relationshipContext:emails.filter(e=>e.classification==='relationship_context'||/\b(intro|introduction|proposal|meeting|follow up|partnership|client|referral)\b/i.test([e.subject,e.bodyPreview,e.snippet].join(' '))).slice(0,20),
-      providers:{gmail:{status:(recentGmail.needsAuth||unreadGmail.needsAuth||sentGmail.needsAuth)?'reconnect_required':'connected',needsAuth:!!(recentGmail.needsAuth||unreadGmail.needsAuth||sentGmail.needsAuth),missingScopes:(gmailStatus.missingScopes||[]).concat(composeStatus.missingScopes||[]),hasComposeScope:composeStatus.connected,error:recentGmail.error||unreadGmail.error||sentGmail.error||'',recentInboxCount:(recentGmail.emails||[]).length,unreadCount:(unreadGmail.emails||[]).length,sentCount:(sentGmail.emails||[]).length,lastSyncAt:new Date().toISOString()},outlook:{needsAuth:!!outlook.needsAuth,error:outlook.error||'',status:outlook.needsAuth?'not_connected':'connected'}},
-      errors:[recentGmail.error,unreadGmail.error,sentGmail.error,outlook.error,composeStatus.connected?'':'Gmail compose scope missing. Drafts will be saved internally until Google is reconnected.'].filter(Boolean),
+      providers:{gmail:{status:(recentGmail.needsAuth||unreadGmail.needsAuth||sentGmail.needsAuth)?'reconnect_required':'connected',needsAuth:!!(recentGmail.needsAuth||unreadGmail.needsAuth||sentGmail.needsAuth),missingScopes:(gmailStatus.missingScopes||[]).concat(composeStatus.missingScopes||[]),hasComposeScope:composeStatus.connected,error:gmailErrors.join('; '),recentInboxCount:(recentGmail.emails||[]).length,unreadCount:(unreadGmail.emails||[]).length,sentCount:(sentGmail.emails||[]).length,fetchedCount:gmailSyncStatus.lastFetchedCount,analyzedCount:emails.length,lastAttemptAt:gmailSyncStatus.lastAttemptAt,lastSyncAt:gmailSyncStatus.lastSuccessfulSyncAt,lastSuccessfulSyncAt:gmailSyncStatus.lastSuccessfulSyncAt,lastQuery:recentQuery,forceRefresh:!!force},outlook:{needsAuth:!!outlook.needsAuth,error:outlook.error||'',status:outlook.needsAuth?'not_connected':'connected'}},
+      errors:[...gmailErrors,outlook.error,composeStatus.connected?'':'Gmail compose scope missing. Drafts will be saved internally until Google is reconnected.'].filter(Boolean),
       emails,
       summary:{total:emails.length,buckets,draftsPrepared,waitingOnResponse,forwardingSuggestions,ignoredLowPriority,ruleSuggestions:0,savedRules:rules.filter(r=>r.isActive!==false).length},
       rules
-    });
+    };
   }catch(e){
-    res.status(500).json({ok:false,error:e.message});
+    gmailSyncStatus.lastError=e.message;
+    throw e;
   }
+}
+app.get('/api/email/intelligence',async(req,res)=>{
+  try{
+    const data=await emailIntelligencePayload(req,{force:req.query.force==='1'||req.query.refresh==='1'});
+    await auditLog({req,action:'email_searched',resourceType:'email_intelligence',metadata:{force:req.query.force==='1'||req.query.refresh==='1',count:data.summary?.total||0},success:data.ok!==false}).catch(()=>{});
+    res.status(data.ok===false?400:200).json(data);
+  }catch(e){res.status(500).json({ok:false,error:e.message,providers:{gmail:{status:'error',error:e.message,lastAttemptAt:gmailSyncStatus.lastAttemptAt,lastSuccessfulSyncAt:gmailSyncStatus.lastSuccessfulSyncAt,lastSyncAt:gmailSyncStatus.lastSuccessfulSyncAt}}});}
+});
+app.post('/api/email/gmail/refresh',async(req,res)=>{
+  try{
+    const data=await emailIntelligencePayload(req,{force:true});
+    await auditLog({req,action:'email_sync_refreshed',resourceType:'gmail',metadata:{count:data.summary?.total||0},success:data.ok!==false}).catch(()=>{});
+    res.status(data.ok===false?400:200).json({...data,refreshed:true});
+  }catch(e){res.status(500).json({ok:false,refreshed:false,error:e.message,providers:{gmail:{status:'error',error:e.message,lastAttemptAt:gmailSyncStatus.lastAttemptAt,lastSuccessfulSyncAt:gmailSyncStatus.lastSuccessfulSyncAt,lastSyncAt:gmailSyncStatus.lastSuccessfulSyncAt}}});}
+});
+app.post('/api/email/inbox-command',async(req,res)=>{
+  try{
+    const query=String(req.body.query||req.body.message||'').trim();
+    if(!query)return res.status(400).json({ok:false,error:'Inbox Command needs a search question.'});
+    const result=await runInboxCommand(query,{maxResults:Number(req.body.maxResults)||8});
+    await auditLog({req,action:'email_searched',resourceType:'inbox_command',metadata:{query,resultCount:result.results?.length||0,providers:['gmail','outlook']},success:true}).catch(()=>{});
+    res.json(result);
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/email/inbox-command/action',async(req,res)=>{
+  try{
+    const result=await inboxCommandAction(req.body||{},req.valUser?.id||currentUserId());
+    await auditLog({req,action:result.action==='forward_draft'?'email_forward_draft_created':(result.action==='draft_reply'?'draft_created':(result.action==='create_task'?'task_created':'email_action')),resourceType:'inbox_command',resourceId:result.draft?.id||result.task?.id||'',metadata:{action:result.action||req.body.action},success:result.ok!==false}).catch(()=>{});
+    res.status(result.ok===false?400:200).json(result);
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 app.get('/api/email/rules',async(req,res)=>{
   try{res.json({ok:true,rules:await listEmailRules(req.valUser.id)});}
@@ -2400,38 +4615,55 @@ function guideHtml(markdown){
 .dash-float{position:fixed;right:18px;bottom:18px;z-index:20;box-shadow:0 18px 50px rgba(0,0,0,.32)}
 .demo-banner{border:1px solid rgba(215,181,109,.35);background:rgba(215,181,109,.08);border-radius:12px;padding:14px 16px;margin-bottom:18px;color:var(--muted);display:${DEMO_MODE?'flex':'none'};gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}.demo-banner strong{color:var(--text)}
 </style></head><body><div class="top"><a href="/dashboard">Back to VAL</a></div><main class="wrap">
-<a class="btn dash-float" href="/dashboard">Back To Dashboard</a>
+<a class="btn dash-float" href="/dashboard?view=dashboard">Keep Exploring</a>
 <div class="demo-banner"><div><strong>Demo Mode</strong><br>Explore VAL with sample meetings, emails, tasks, relationships, drafts, transcripts, and pipeline data. Reset any time.</div><div class="actions"><a class="btn" href="${VAL_SIGNUP_URL}">Get Your VAL Now</a><button class="btn secondary" onclick="resetDemo()">Reset Demo</button></div></div>
-<section class="hero"><div><div class="eyebrow">Velocity-Activated Leverage</div><h1>VAL</h1><p>Your executive operating layer. Never lose track of important people, promises, or opportunities again.</p><div class="actions"><a class="btn" href="/dashboard">Open Demo</a><a class="btn secondary" href="/dashboard">Run Relationship Review</a><a class="btn" href="${VAL_SIGNUP_URL}">Get Your VAL Now</a></div></div></section>
+<section class="hero"><div><div class="eyebrow">Velocity-Activated Leverage</div><h1>VAL</h1><p>Your executive operating layer. Never lose track of important people, promises, or opportunities again.</p><div class="actions"><a class="btn" href="/dashboard?view=dashboard">Keep Exploring</a><a class="btn secondary" href="/dashboard?view=relationships">Run Relationship Review</a><a class="btn" href="${VAL_SIGNUP_URL}">Get Your VAL Now</a></div></div></section>
 <section><div class="section-head"><div><h2>Your Priorities</h2><p>Start with the moves that create clarity fastest.</p></div></div><div class="grid">
-<a class="card" href="/dashboard"><span class="icon">${icon.calendar}</span><h3>Prepare For Today</h3><p>Know who matters before your next conversation.</p><div class="status" id="meetingStatus">Loading meetings</div></a>
-<a class="card" href="/dashboard"><span class="icon">${icon.radar}</span><h3>Relationship Review</h3><p>See who matters most, which relationships are cooling, and where hidden opportunity exists.</p><div class="status" id="radarStatus">Checking signals</div></a>
-<a class="card" href="/dashboard"><span class="icon">${icon.stack}</span><h3>Approval Queue</h3><p>Review drafts, promises, and pending actions.</p><div class="status" id="queueStatus">Loading drafts</div></a>
-<a class="card" href="/dashboard"><span class="icon">${icon.stack}</span><h3>Email Intelligence</h3><p>Find needed replies, waiting-on-response items, and safe draft opportunities.</p><div class="status">Review inbox signals</div></a>
-<a class="card" href="/dashboard"><span class="icon">${icon.node}</span><h3>Integration Status</h3><p>Check Gmail, Calendar, transcripts, tasks, drafts, and missing permissions.</p><div class="status">Verify data pipes</div></a>
-<a class="card" href="/dashboard"><span class="icon">${icon.node}</span><h3>Register Your Keys</h3><p>Securely add client-owned keys and connection details inside VAL.</p><div class="status">Encrypted setup</div></a>
+<a class="card" href="/dashboard?view=meetings"><span class="icon">${icon.calendar}</span><h3>Prepare For Today</h3><p>Know who matters before your next conversation.</p><div class="status" id="meetingStatus">Loading meetings</div></a>
+<a class="card" href="/dashboard?view=relationships"><span class="icon">${icon.radar}</span><h3>Relationship Review</h3><p>See who matters most, which relationships are cooling, and where hidden opportunity exists.</p><div class="status" id="radarStatus">Checking signals</div></a>
+<a class="card" href="/dashboard?view=drafts"><span class="icon">${icon.stack}</span><h3>Approval Queue</h3><p>Review drafts, promises, and pending actions.</p><div class="status" id="queueStatus">Loading drafts</div></a>
+<a class="card" href="/dashboard?view=email_intelligence"><span class="icon">${icon.stack}</span><h3>Email Intelligence</h3><p>Find needed replies, waiting-on-response items, safe drafts, and repeatable rules.</p><div class="status" id="emailStatus">Review inbox signals</div></a>
+<a class="card" href="/dashboard?view=email_intelligence"><span class="icon">${icon.node}</span><h3>Inbox Command</h3><p>Ask for the email you remember, then summarize, draft, forward, or task it safely.</p><div class="status">Natural language email search</div></a>
+<a class="card" href="/dashboard?view=transcripts"><span class="icon">${icon.voice}</span><h3>Transcript Intelligence</h3><p>Open call memory, summaries, staged tasks, recap drafts, and review queues.</p><div class="status" id="transcriptStatus">Loading transcripts</div></a>
+<a class="card" href="/dashboard?view=tasks"><span class="icon">${icon.calendar}</span><h3>Calendarized Tasks</h3><p>Turn important tasks into private protected work blocks with no meeting link.</p><div class="status" id="taskScheduleStatus">Checking open loops</div></a>
+<a class="card" href="/dashboard?view=integration_status"><span class="icon">${icon.node}</span><h3>Integration Status</h3><p>Check Gmail, Calendar, transcripts, tasks, drafts, and missing permissions.</p><div class="status">Verify data pipes</div></a>
+<a class="card" href="/dashboard?view=settings"><span class="icon">${icon.node}</span><h3>API Keys & Connections</h3><p>Securely add client-owned keys and connection details inside VAL.</p><div class="status">Encrypted setup</div></a>
 </div></section>
-<section><div class="section-head"><div><h2>Your First 3 Minutes</h2><p>A short path that helps VAL understand you and start creating momentum.</p></div></div><div class="journey"><div class="step"><span>Step 1</span><h3>Personalize VAL</h3><p>Tell VAL who you are, how you work, and what relationships drive your business.</p><a class="btn secondary" href="/dashboard">Personalize VAL</a></div><div class="step"><span>Step 2</span><h3>Review Today</h3><p>See meetings, priorities, and what needs your attention before the day gets noisy.</p><a class="btn secondary" href="/dashboard">Open Today View</a></div><div class="step"><span>Step 3</span><h3>Run Relationship Review</h3><p>Find the people, promises, and opportunities most likely to create value or lose trust if ignored.</p><a class="btn secondary" href="/dashboard">Run Relationship Review</a></div></div></section>
-<section><div class="section-head"><div><h2>What Do You Want To Do?</h2><p>Choose by outcome, not by feature name.</p></div></div><div class="modes"><div class="mode"><h3>Stay Ahead</h3><a href="/dashboard">Meeting Prep</a><a href="/dashboard">Daily Rhythm</a><a href="/dashboard">Calendar Intelligence</a></div><div class="mode"><h3>Protect Relationships</h3><a href="/dashboard">Relationship Review</a><a href="/dashboard">Follow-Ups</a><a href="/dashboard">Contact Command Center</a></div><div class="mode"><h3>Clear Mental Load</h3><a href="/dashboard">Approval Queue</a><a href="/dashboard">Drafts</a><a href="/dashboard">Tasks By Relationship</a></div><div class="mode"><h3>Trust The System</h3><a href="/dashboard">Email Intelligence</a><a href="/dashboard">Integration Status</a><a href="/dashboard">Register Your Keys</a></div></div></section>
-<section><div class="section-head"><div><h2>Recent Activity</h2><p>VAL should feel alive. These signals update from your workspace.</p></div></div><div class="activity"><div id="activityMeetings">Meetings loading</div><div id="activityTasks">Tasks loading</div><div id="activityFollowups">Follow-ups loading</div></div></section>
+<section><div class="section-head"><div><h2>Your First 5 Minutes</h2><p>A short path that helps VAL understand you and shows the highest-excitement flows quickly.</p></div></div><div class="journey"><div class="step"><span>Step 1</span><h3>Personalize VAL</h3><p>Tell VAL who you are, how you work, and what relationships drive your business.</p><a class="btn secondary" href="/dashboard?view=chat">Personalize VAL</a></div><div class="step"><span>Step 2</span><h3>Review Today</h3><p>See meetings, priorities, and what needs your attention before the day gets noisy.</p><a class="btn secondary" href="/dashboard?view=intelligence">Open Today View</a></div><div class="step"><span>Step 3</span><h3>Open Email AI</h3><p>Use Inbox Command to find a thread, create a task, or prepare an approval-safe reply draft.</p><a class="btn secondary" href="/dashboard?view=email_intelligence">Open Email AI</a></div><div class="step"><span>Step 4</span><h3>Open Transcripts</h3><p>Review summaries, staged tasks, participant matches, contact updates, and recap drafts.</p><a class="btn secondary" href="/dashboard?view=transcripts">Open Transcripts</a></div><div class="step"><span>Step 5</span><h3>Calendarize A Task</h3><p>Turn one open commitment into a private protected work block so it actually gets done.</p><a class="btn secondary" href="/dashboard?view=tasks">Calendarize Tasks</a></div><div class="step"><span>Step 6</span><h3>Run Relationship Review</h3><p>Find the people, promises, and opportunities most likely to create value or lose trust if ignored.</p><a class="btn secondary" href="/dashboard?view=relationships">Run Relationship Review</a></div></div></section>
+<section><div class="section-head"><div><h2>What Do You Want To Do?</h2><p>Choose by outcome, not by feature name.</p></div></div><div class="modes"><div class="mode"><h3>Stay Ahead</h3><a href="/dashboard?view=meetings">Meeting Prep</a><a href="/dashboard?view=intelligence">Daily Rhythm</a><a href="/dashboard?view=meetings">Calendar Intelligence</a></div><div class="mode"><h3>Protect Relationships</h3><a href="/dashboard?view=relationships">Relationship Review</a><a href="/dashboard?view=drafts">Follow-Ups</a><a href="/dashboard?view=relationships">Contact Command Center</a></div><div class="mode"><h3>Clear Mental Load</h3><a href="/dashboard?view=drafts">Approval Queue</a><a href="/dashboard?view=drafts">Drafts</a><a href="/dashboard?view=tasks">Tasks By Relationship</a></div><div class="mode"><h3>Trust The System</h3><a href="/dashboard?view=email_intelligence">Email Intelligence</a><a href="/dashboard?view=integration_status">Integration Status</a><a href="/dashboard?view=settings">API Keys & Connections</a></div></div></section>
+<section><div class="section-head"><div><h2>Recent Activity</h2><p>VAL should feel alive. These signals update from your workspace.</p></div></div><div class="activity"><div id="activityMeetings">Meetings loading</div><div id="activityTasks">Tasks loading</div><div id="activityFollowups">Follow-ups loading</div><div id="activityTranscripts">Transcripts loading</div><div id="activityEmail">Email intelligence loading</div><div id="activityCalendarized">Calendarized work loading</div></div></section>
 <section><div class="section-head"><div><h2>Learn VAL</h2><p>The full reference is here when you want depth. You do not need to study it first.</p></div></div><details><summary>See Full Reference</summary><div class="reference"><p>${referenceHtml}</p></div></details></section>
 </main><script>
 async function json(url){try{const r=await fetch(url);return r.ok?await r.json():null}catch(e){return null}}
 function set(id,text){const el=document.getElementById(id);if(el)el.textContent=text}
 (async()=>{
-  const [tasks,cal,comms,props]=await Promise.all([json('/api/val/tasks'),json('/api/calendar'),json('/api/comms'),json('/api/proposals')]);
+  const [tasks,cal,comms,props,transcripts,loops,email]=await Promise.all([json('/api/val/tasks'),json('/api/calendar'),json('/api/comms'),json('/api/proposals'),json('/api/val/transcripts?days=3650&limit=25'),json('/api/val/tasks/open-loops'),json('/api/email/intelligence?limit=20')]);
   const open=Array.isArray(tasks)?tasks.filter(t=>!t.completed):[];
   const overdue=open.filter(t=>t.dueDate&&new Date(t.dueDate)<new Date());
+  const unscheduled=(loops&&loops.unscheduled&&loops.unscheduled.length)||open.filter(t=>!t.scheduledStart&&!t.calendarEventId).length;
+  const calendarized=open.filter(t=>t.scheduledStart||t.calendarEventId).length;
   const events=(cal&&cal.calendarEvents)||[];
   const today=events.filter(e=>{const raw=e.startTime||e.date||(e.start&&(e.start.dateTime||e.start.date));return raw&&new Date(raw).toDateString()===new Date().toDateString()});
   const unread=(comms&&comms.total)||0;
   const drafts=(props&&props.draft)||0;
+  const trCounts=(transcripts&&transcripts.counts)||{};
+  const trTotal=trCounts.total||((transcripts&&transcripts.transcripts&&transcripts.transcripts.length)||0);
+  const trReview=trCounts.needsReview||0;
+  const emailSummary=(email&&email.summary)||{};
+  const emailTotal=emailSummary.total||((email&&email.emails&&email.emails.length)||0);
+  const emailDrafts=emailSummary.draftsPrepared||0;
   set('meetingStatus',today.length?today.length+' meetings today':'No meetings today');
   set('radarStatus',(unread+overdue.length)?(unread+overdue.length)+' signals need attention':'All clear right now');
   set('queueStatus',drafts?drafts+' drafts waiting':'No drafts waiting');
+  set('emailStatus',emailDrafts?emailDrafts+' drafts prepared':emailTotal?emailTotal+' emails analyzed':'Connect inbox');
+  set('transcriptStatus',trReview?trReview+' need review':trTotal?trTotal+' transcripts saved':'Webhook ready');
+  set('taskScheduleStatus',unscheduled?unscheduled+' tasks need time':calendarized?calendarized+' protected blocks':'No unscheduled tasks');
   set('activityMeetings',today.length?today.length+' meetings on deck':'Calendar is clear today');
   set('activityTasks',overdue.length?overdue.length+' overdue tasks':open.length+' open tasks');
   set('activityFollowups',unread?unread+' unread conversations':'No unread conversations');
+  set('activityTranscripts',trTotal?trTotal+' transcripts in memory':'No transcripts received yet');
+  set('activityEmail',emailTotal?emailTotal+' emails analyzed':'Email Intelligence ready after connection');
+  set('activityCalendarized',calendarized?calendarized+' tasks have protected time':unscheduled+' tasks still need calendar time');
 })();
 async function resetDemo(){await fetch('/api/demo/reset',{method:'POST'});location.href='/guide';}
 </script></body></html>`;
@@ -2444,17 +4676,29 @@ app.get('/guide',(req,res)=>{
   });
 });
 app.use(express.static(__dirname));
-app.get('/dashboard',(req,res)=>res.sendFile(path.join(__dirname,'dashboard.html')));
+app.get('/dashboard',(req,res)=>{res.set('Cache-Control','no-store, max-age=0');res.sendFile(path.join(__dirname,'dashboard.html'));});
 
 // ════════════════════════════════════════════════════════
 // GOOGLE OAUTH
 // ════════════════════════════════════════════════════════
 
-const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-const REDIRECT_URI         = process.env.GOOGLE_REDIRECT_URI || process.env.REDIRECT_URI || `${CLIENT_CONFIG.publicBaseUrl}/auth/callback`;
+function firstEnvValue(names){
+  for(const name of names){
+    const value=String(process.env[name]||'').trim();
+    if(value) return value;
+  }
+  return '';
+}
+const GOOGLE_CLIENT_ID_ENV_NAMES = ['GOOGLE_CLIENT_ID','GOOGLE_OAUTH_CLIENT_ID','GOOGLE_AUTH_CLIENT_ID'];
+const GOOGLE_CLIENT_SECRET_ENV_NAMES = ['GOOGLE_CLIENT_SECRET','GOOGLE_OAUTH_CLIENT_SECRET','GOOGLE_AUTH_CLIENT_SECRET'];
+const GOOGLE_REDIRECT_URI_ENV_NAMES = ['GOOGLE_REDIRECT_URI','GOOGLE_OAUTH_REDIRECT_URI','REDIRECT_URI'];
+const GOOGLE_CLIENT_ID     = firstEnvValue(GOOGLE_CLIENT_ID_ENV_NAMES);
+const GOOGLE_CLIENT_SECRET = firstEnvValue(GOOGLE_CLIENT_SECRET_ENV_NAMES);
+const CONFIGURED_GOOGLE_REDIRECT_URI = firstEnvValue(GOOGLE_REDIRECT_URI_ENV_NAMES);
+const REDIRECT_URI         = CONFIGURED_GOOGLE_REDIRECT_URI || `${CLIENT_CONFIG.publicBaseUrl}/auth/callback`;
 const DEFAULT_GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/calendar.readonly',
+  'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/gmail.readonly',
   'https://www.googleapis.com/auth/gmail.compose',
   'https://www.googleapis.com/auth/drive.readonly',
@@ -2465,7 +4709,8 @@ const GOOGLE_SCOPES = String(process.env.GOOGLE_SCOPES||'').trim()
   ? Array.from(new Set(String(process.env.GOOGLE_SCOPES).split(/\s+/).map(s=>s.trim()).filter(Boolean).concat([
       'https://www.googleapis.com/auth/drive.readonly',
       'https://www.googleapis.com/auth/drive.file',
-      'https://www.googleapis.com/auth/documents'
+      'https://www.googleapis.com/auth/documents',
+      'https://www.googleapis.com/auth/calendar.events'
     ])))
   : DEFAULT_GOOGLE_SCOPES;
 const REQUIRED_GMAIL_SCOPES = [
@@ -2480,6 +4725,41 @@ const REQUIRED_GOOGLE_DOC_SCOPES = [
 let googleTokens = {}; // hot cache; durable copy lives in Postgres scoped by tenant/user.
 let googleTokensLoaded = false;
 let lastGoogleAuthError = null;
+let gmailSyncStatus = {lastAttemptAt:'',lastSuccessfulSyncAt:'',lastError:'',lastFetchedCount:0,lastAnalyzedCount:0,lastQuery:''};
+
+function validGoogleClientId(id=GOOGLE_CLIENT_ID){
+  return /^\d+[-\w]*\.apps\.googleusercontent\.com$/.test(String(id||'').trim());
+}
+function googleRedirectUri(req=null){
+  return CONFIGURED_GOOGLE_REDIRECT_URI || (req ? `${baseUrl(req)}/auth/callback` : REDIRECT_URI);
+}
+function googleOAuthConfigProblems(req=null){
+  const problems=[];
+  if(!GOOGLE_CLIENT_ID) problems.push(`Missing ${GOOGLE_CLIENT_ID_ENV_NAMES.join(' or ')}`);
+  else if(!validGoogleClientId()) problems.push('GOOGLE_CLIENT_ID does not look like a Google OAuth web client ID ending in .apps.googleusercontent.com');
+  if(!GOOGLE_CLIENT_SECRET) problems.push(`Missing ${GOOGLE_CLIENT_SECRET_ENV_NAMES.join(' or ')}`);
+  if(!googleRedirectUri(req)) problems.push(`Missing ${GOOGLE_REDIRECT_URI_ENV_NAMES.join(' or ')} or VAL_PUBLIC_BASE_URL`);
+  if(IS_PRODUCTION&&!encryptionConfigured()) problems.push('Missing ENCRYPTION_KEY in this Railway service/environment; production OAuth token saves are blocked until it is available at runtime');
+  return problems;
+}
+function googleOAuthConfigSnapshot(){
+  return {
+    ok:googleOAuthConfigProblems().length===0,
+    clientIdConfigured:!!GOOGLE_CLIENT_ID,
+    clientIdLooksValid:validGoogleClientId(),
+    clientId:maskSecret(GOOGLE_CLIENT_ID),
+    clientSecretConfigured:!!GOOGLE_CLIENT_SECRET,
+    redirectUri:googleRedirectUri(),
+    encryptionConfigured:encryptionConfigured(),
+    envNames:{
+      clientId:GOOGLE_CLIENT_ID_ENV_NAMES,
+      clientSecret:GOOGLE_CLIENT_SECRET_ENV_NAMES,
+      redirectUri:GOOGLE_REDIRECT_URI_ENV_NAMES,
+      encryptionKey:'ENCRYPTION_KEY'
+    },
+    problems:googleOAuthConfigProblems()
+  };
+}
 
 // Optional legacy fallback only. Prefer OAuth reconnect so tokens are scoped to this VAL tenant/user.
 if(process.env.GOOGLE_REFRESH_TOKEN && /^(1|true|yes)$/i.test(String(process.env.ALLOW_GOOGLE_REFRESH_TOKEN_ENV||''))){
@@ -2492,7 +4772,7 @@ async function saveOAuthTokens(provider,tokens){
   if(!tokens||!Object.keys(tokens).length) return;
   const userId=currentUserId();
   const tenant=tenantId();
-  const scopedTokens={...tokens,user_id:userId,tenant_id:tenant,client_slug:CLIENT_CONFIG.clientSlug};
+  const scopedTokens=encryptOAuthTokens({...tokens,user_id:userId,tenant_id:tenant,client_slug:CLIENT_CONFIG.clientSlug});
   if(pgPool){
     await valDbReady;
     await dbQuery(`
@@ -2515,10 +4795,10 @@ async function loadOAuthTokens(provider){
   const tenant=tenantId();
   if(pgPool){
     const r=await dbQuery('select tokens from val_oauth_tokens where provider=$1 and tenant_id=$2 and user_id=$3 order by updated_at desc limit 1',[provider,tenant,userId]);
-    return r.rows[0]?.tokens || null;
+    return r.rows[0]?.tokens ? decryptOAuthTokens(r.rows[0].tokens) : null;
   }
   const tokens=valStore().oauthTokens||{};
-  return tokens[`${tenant}:${userId}:${provider}`] || null;
+  return tokens[`${tenant}:${userId}:${provider}`] ? decryptOAuthTokens(tokens[`${tenant}:${userId}:${provider}`]) : null;
 }
 
 async function ensureGoogleTokensLoaded(){
@@ -2583,7 +4863,7 @@ app.post('/api/analyze-image',async(req,res)=>{
     const {base64,mediaType,prompt}=req.body;
     if(!base64||!mediaType) return res.status(400).json({error:'Missing base64 or mediaType'});
     const openAiKey=await resolveOpenAIKey();
-    if(!openAiKey) return res.status(500).json({error:'OPENAI_KEY not configured'});
+    if(!openAiKey) return res.status(500).json({error:'Chat is not working because your AI API key is missing. Go to Railway → Variables and add OPENAI_API_KEY. Then redeploy Baby VAL.'});
     const r=await fetch('https://api.openai.com/v1/chat/completions',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${openAiKey}`},
@@ -2614,7 +4894,7 @@ app.post('/api/generate-image',async(req,res)=>{
     const {prompt,size,quality}=req.body;
     if(!prompt) return res.status(400).json({error:'Missing prompt'});
     const openAiKey=await resolveOpenAIKey();
-    if(!openAiKey) return res.status(500).json({error:'OPENAI_KEY not configured'});
+    if(!openAiKey) return res.status(500).json({error:'Chat is not working because your AI API key is missing. Go to Railway → Variables and add OPENAI_API_KEY. Then redeploy Baby VAL.'});
     const r=await fetch('https://api.openai.com/v1/images/generations',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':`Bearer ${openAiKey}`},
@@ -2637,10 +4917,23 @@ app.post('/api/generate-image',async(req,res)=>{
     res.status(500).json({error:e.message});
   }
 });
+app.post('/api/claude',async(req,res)=>{
+  try{
+    const key=await resolveAnthropicKey();if(!key)return res.status(400).json({ok:false,error:'Connect Anthropic in Settings before using Claude.'});
+    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},body:JSON.stringify({model:req.body.model||'claude-sonnet-4-20250514',max_tokens:Number(req.body.max_tokens)||2000,system:req.body.system||'',messages:req.body.messages||[{role:'user',content:req.body.user||''}]})});
+    const d=await r.json();if(!r.ok)return res.status(r.status).json({ok:false,error:d.error?.message||'Claude request failed'});res.json({ok:true,text:(d.content||[]).map(x=>x.text||'').join(''),usage:d.usage||{}});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 
 app.get('/auth/google', (req, res) => {
+  const problems=googleOAuthConfigProblems(req);
+  const redirectUri=googleRedirectUri(req);
+  if(problems.length){
+    lastGoogleAuthError=problems.join('; ');
+    return res.status(200).send(`<h2 style="font-family:sans-serif;padding:2rem 2rem 0">Google OAuth needs configuration</h2><div style="font-family:sans-serif;padding:0 2rem 2rem;line-height:1.5"><p>VAL stopped before redirecting to Google because this deployment is missing required configuration.</p><ul>${problems.map(p=>`<li>${escapeHtml(p)}</li>`).join('')}</ul><p><strong>Redirect URI expected in Google Cloud:</strong><br><code>${escapeHtml(redirectUri)}</code></p><p><strong>OAuth client ID loaded:</strong> ${GOOGLE_CLIENT_ID?escapeHtml(maskSecret(GOOGLE_CLIENT_ID)):'not configured'}</p><p>Add/fix these Railway variables on the service serving <code>${escapeHtml(baseUrl(req))}</code>, redeploy, then reconnect Google again.</p></div>`);
+  }
   const scopes = GOOGLE_SCOPES.join(' ');
-  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&include_granted_scopes=true`;
+  const url = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(GOOGLE_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scopes)}&access_type=offline&prompt=consent&include_granted_scopes=true`;
   res.redirect(url);
 });
 
@@ -2649,6 +4942,9 @@ app.get('/auth/callback', async (req, res) => {
   const {code} = req.query;
   if(!code) return res.status(400).send('No code received');
   try {
+    const problems=googleOAuthConfigProblems(req);
+    if(problems.length) throw new Error(problems.join('; '));
+    const redirectUri=googleRedirectUri(req);
     const existingTokens = await loadOAuthTokens('google') || googleTokens || {};
     const r = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
@@ -2656,7 +4952,7 @@ app.get('/auth/callback', async (req, res) => {
       body: new URLSearchParams({
         code, client_id: GOOGLE_CLIENT_ID,
         client_secret: GOOGLE_CLIENT_SECRET,
-        redirect_uri: REDIRECT_URI,
+        redirect_uri: redirectUri,
         grant_type: 'authorization_code'
       })
     });
@@ -2672,6 +4968,7 @@ app.get('/auth/callback', async (req, res) => {
     lastGoogleAuthError = null;
     await saveOAuthTokens('google',googleTokens);
     console.log('Google tokens stored. refresh_token present:', !!googleTokens.refresh_token, 'scope count:', googleScopeList().length);
+    await auditLog({req,action:'oauth_account_connected',resourceType:'oauth',resourceId:'google',metadata:{scopes:googleScopeList(),hasRefreshToken:!!googleTokens.refresh_token},success:true}).catch(()=>{});
     res.send(`<h2 style="font-family:sans-serif;padding:2rem">Google Calendar, Gmail, Drive, and Docs connected to VAL.<br><br>You can close this tab.</h2>`);
   } catch(e) {
     res.status(500).send('Auth failed: '+e.message);
@@ -2748,6 +5045,29 @@ async function getGoogleToken() {
   }
 }
 
+async function gmailFetchJson(url,options={},label='Gmail request'){
+  let token=await getGoogleToken();
+  if(!token) throw new Error(lastGoogleAuthError||'Google auth required');
+  let response=await fetch(url,{...options,headers:{...(options.headers||{}),Authorization:`Bearer ${token}`}});
+  let data=await readJsonResponse(response);
+  if(response.status===401&&googleTokens.refresh_token){
+    lastGoogleAuthError='Google access token expired or was rejected. Refreshing token and retrying Gmail.';
+    googleTokens={...googleTokens,access_token:'',issued_at:0};
+    await saveOAuthTokens('google',googleTokens).catch(()=>{});
+    token=await getGoogleToken();
+    if(token){
+      response=await fetch(url,{...options,headers:{...(options.headers||{}),Authorization:`Bearer ${token}`}});
+      data=await readJsonResponse(response);
+    }
+  }
+  if(!response.ok){
+    const message=data?.error?.message||`${label} failed (${response.status})`;
+    if(response.status===401) lastGoogleAuthError=message;
+    throw new Error(message);
+  }
+  return data;
+}
+
 // Auth status check
 app.get('/auth/status', async (req, res) => {
   const status=await getGoogleConnectionStatus(GOOGLE_SCOPES);
@@ -2778,7 +5098,8 @@ app.get('/api/google/calendar', async (req, res) => {
 });
 
 app.get('/auth/microsoft',(req,res)=>{
-  if(!MICROSOFT_CLIENT_ID||!MICROSOFT_REDIRECT_URI) return res.status(500).send('Microsoft OAuth is not configured.');
+  const missing=missingEnvNames(['MICROSOFT_CLIENT_ID','MICROSOFT_CLIENT_SECRET','MICROSOFT_REDIRECT_URI']);
+  if(missing.length) return res.status(200).send(`<h2 style="font-family:sans-serif;padding:2rem 2rem 0">Microsoft cannot connect yet</h2><div style="font-family:sans-serif;padding:0 2rem 2rem;line-height:1.5"><p>Microsoft cannot connect yet because these Railway variables are missing: ${missing.map(escapeHtml).join(', ')}.</p><p>Add them in Railway → Variables, then redeploy.</p><p><strong>Redirect URI should be:</strong><br><code>${escapeHtml((CLIENT_CONFIG.publicBaseUrl||baseUrl(req)).replace(/\/$/,'')+'/auth/microsoft/callback')}</code></p></div>`);
   const url='https://login.microsoftonline.com/common/oauth2/v2.0/authorize?'+new URLSearchParams({
     client_id:MICROSOFT_CLIENT_ID,
     response_type:'code',
@@ -2807,6 +5128,7 @@ app.get('/auth/microsoft/callback',async(req,res)=>{
     const tokens=await readJsonResponse(r);
     if(!r.ok||tokens.error) throw new Error(tokens.error_description||tokens.error||`Microsoft token exchange failed (${r.status})`);
     await saveOAuthTokens('microsoft',{...tokens,issued_at:Date.now(),scope:tokens.scope||MICROSOFT_SCOPES.join(' ')});
+    await auditLog({req,action:'oauth_account_connected',resourceType:'oauth',resourceId:'microsoft',metadata:{scopes:String(tokens.scope||MICROSOFT_SCOPES.join(' ')).split(/\s+/),hasRefreshToken:!!tokens.refresh_token},success:true}).catch(()=>{});
     res.send('<h2 style="font-family:sans-serif;padding:2rem">Microsoft Outlook connected to VAL. You can close this tab.</h2>');
   }catch(e){
     res.status(500).send('Microsoft auth failed: '+e.message);
@@ -2896,6 +5218,128 @@ async function fetchGoogleCalendarEvents(start,end,maxResults=50){
     raw:e
   }));
 }
+
+function defaultTaskCalendarSettings(){
+  return {
+    task_calendarization_mode:'suggest',
+    default_duration_minutes:Number(process.env.VAL_TASK_BLOCK_MINUTES||45),
+    default_reminder_minutes:Number(process.env.VAL_TASK_REMINDER_MINUTES||10),
+    default_provider:String(process.env.VAL_TASK_CALENDAR_PROVIDER||'auto').toLowerCase(),
+    workday_start_hour:Number(process.env.VAL_WORKDAY_START_HOUR||9),
+    workday_end_hour:Number(process.env.VAL_WORKDAY_END_HOUR||17),
+    avoid_weekends:String(process.env.VAL_TASK_AVOID_WEEKENDS||'true')!=='false',
+    completion_behavior:String(process.env.VAL_TASK_COMPLETION_BEHAVIOR||'keep_event_as_done')
+  };
+}
+function taskBlockTitle(task,prefix='TASK'){
+  const raw=String(task?.title||task?.taskTitle||'VAL task').replace(/^(TASK|FOCUS|DONE):\s*/i,'').trim()||'VAL task';
+  return `${prefix}: ${raw}`;
+}
+function doneTaskBlockTitle(task){
+  const raw=String(task?.title||task?.taskTitle||'VAL task').replace(/^(TASK|FOCUS|DONE):\s*/i,'').trim()||'VAL task';
+  return `DONE: ${raw}`;
+}
+function taskBlockDescription(task){
+  return [
+    'Protected work block created by VAL.',
+    'No attendees were invited. No meeting link was created.',
+    task?.contactName?`Related contact: ${task.contactName}`:'',
+    task?.notes?`\nTask notes:\n${String(task.notes).slice(0,1800)}`:''
+  ].filter(Boolean).join('\n');
+}
+function pickTaskProvider(preferred){
+  preferred=String(preferred||'auto').toLowerCase();
+  if(preferred==='google'||preferred==='outlook') return preferred;
+  if(googleTokens?.refresh_token||googleTokens?.access_token) return 'google';
+  return 'outlook';
+}
+function parseTaskDate(value){
+  if(!value)return null;
+  const d=new Date(value);
+  return isNaN(d.getTime())?null:d;
+}
+function addMinutes(date,minutes){return new Date(date.getTime()+Number(minutes||0)*60000);}
+function intervalsOverlap(aStart,aEnd,bStart,bEnd){return aStart<bEnd&&bStart<aEnd;}
+async function createGoogleTaskBlock(task,{start,end,calendarId='primary',durationMinutes,focus=false}={}){
+  const token=await getGoogleToken();
+  if(!token) throw new Error(lastGoogleAuthError||'Google auth required');
+  const event={
+    summary:taskBlockTitle(task,focus?'FOCUS':'TASK'),
+    description:taskBlockDescription(task),
+    start:{dateTime:start.toISOString(),timeZone:CLIENT_CONFIG.timezone},
+    end:{dateTime:end.toISOString(),timeZone:CLIENT_CONFIG.timezone},
+    transparency:'opaque',
+    visibility:'private',
+    attendees:[],
+    reminders:{useDefault:false,overrides:[{method:'popup',minutes:Number(defaultTaskCalendarSettings().default_reminder_minutes||10)}]},
+    extendedProperties:{private:{val_task_id:task.id,val_block_type:'task',estimated_duration_minutes:String(durationMinutes||'')}}
+  };
+  const url=`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?sendUpdates=none`;
+  const r=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(event)});
+  const d=await readJsonResponse(r);
+  if(!r.ok||d.error) throw new Error(d.error?.message||`Google task block failed (${r.status})`);
+  return {provider:'google',calendarId,eventId:d.id,webLink:d.htmlLink||'',raw:d};
+}
+async function updateGoogleTaskBlock(task,{eventId,calendarId='primary',start,end,completed=false,focus=false}={}){
+  const token=await getGoogleToken();
+  if(!token) throw new Error(lastGoogleAuthError||'Google auth required');
+  const event={
+    summary:completed?doneTaskBlockTitle(task):taskBlockTitle(task,focus?'FOCUS':'TASK'),
+    description:taskBlockDescription(task),
+    start:{dateTime:start.toISOString(),timeZone:CLIENT_CONFIG.timezone},
+    end:{dateTime:end.toISOString(),timeZone:CLIENT_CONFIG.timezone},
+    transparency:'opaque',
+    visibility:'private',
+    attendees:[]
+  };
+  const url=`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}?sendUpdates=none`;
+  const r=await fetch(url,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(event)});
+  const d=await readJsonResponse(r);
+  if(!r.ok||d.error) throw new Error(d.error?.message||`Google task block update failed (${r.status})`);
+  return {provider:'google',calendarId,eventId:d.id||eventId,webLink:d.htmlLink||'',raw:d};
+}
+async function createOutlookTaskBlock(task,{start,end,calendarId='',durationMinutes,focus=false}={}){
+  const token=await getMicrosoftToken();
+  if(!token) throw new Error('Microsoft auth required');
+  const event={
+    subject:taskBlockTitle(task,focus?'FOCUS':'TASK'),
+    body:{contentType:'text',content:taskBlockDescription(task)},
+    start:{dateTime:start.toISOString(),timeZone:'UTC'},
+    end:{dateTime:end.toISOString(),timeZone:'UTC'},
+    showAs:'busy',
+    sensitivity:'private',
+    isReminderOn:true,
+    reminderMinutesBeforeStart:Number(defaultTaskCalendarSettings().default_reminder_minutes||10),
+    attendees:[],
+    singleValueExtendedProperties:[{id:'String {00020329-0000-0000-C000-000000000046} Name val_task_id',value:String(task.id)}]
+  };
+  const url=calendarId?`https://graph.microsoft.com/v1.0/me/calendars/${encodeURIComponent(calendarId)}/events`:'https://graph.microsoft.com/v1.0/me/events';
+  const r=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Prefer:`outlook.timezone="${CLIENT_CONFIG.timezone}"`},body:JSON.stringify(event)});
+  const d=await readJsonResponse(r);
+  if(!r.ok) throw new Error(d.error?.message||`Outlook task block failed (${r.status})`);
+  return {provider:'outlook',calendarId,eventId:d.id,webLink:d.webLink||'',raw:d};
+}
+async function updateOutlookTaskBlock(task,{eventId,start,end,completed=false,focus=false}={}){
+  const token=await getMicrosoftToken();
+  if(!token) throw new Error('Microsoft auth required');
+  const event={
+    subject:completed?doneTaskBlockTitle(task):taskBlockTitle(task,focus?'FOCUS':'TASK'),
+    body:{contentType:'text',content:taskBlockDescription(task)},
+    start:{dateTime:start.toISOString(),timeZone:'UTC'},
+    end:{dateTime:end.toISOString(),timeZone:'UTC'},
+    showAs:'busy',
+    sensitivity:'private',
+    attendees:[]
+  };
+  const r=await fetch(`https://graph.microsoft.com/v1.0/me/events/${encodeURIComponent(eventId)}`,{method:'PATCH',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json',Prefer:`outlook.timezone="${CLIENT_CONFIG.timezone}"`},body:JSON.stringify(event)});
+  const d=await readJsonResponse(r);
+  if(!r.ok) throw new Error(d.error?.message||`Outlook task block update failed (${r.status})`);
+  return {provider:'outlook',eventId,webLink:d.webLink||'',raw:d};
+}
+const calendarProviders={
+  google:{createTaskBlock:createGoogleTaskBlock,updateTaskBlock:updateGoogleTaskBlock},
+  outlook:{createTaskBlock:createOutlookTaskBlock,updateTaskBlock:updateOutlookTaskBlock}
+};
 
 async function fetchGhlCalendarEvents(start,end){
   const accounts=await resolvedGhlAccounts();
@@ -3021,7 +5465,9 @@ function normalizeGmailMessage(md){
   const to=String(header('To')||'').split(',').map(parseEmailAddress).filter(v=>v.email);
   const cc=String(header('Cc')||'').split(',').map(parseEmailAddress).filter(v=>v.email);
   const attachments=JSON.stringify(md.payload||{}).includes('"filename"');
-  const date=header('Date') ? new Date(header('Date')).toISOString() : '';
+  const parsedDate=header('Date') ? new Date(header('Date')) : null;
+  const internalDate=md.internalDate ? new Date(Number(md.internalDate)) : null;
+  const date=parsedDate&&!isNaN(parsedDate.getTime()) ? parsedDate.toISOString() : (internalDate&&!isNaN(internalDate.getTime()) ? internalDate.toISOString() : '');
   return {
     provider:'gmail',
     messageId:md.id||'',
@@ -3045,6 +5491,13 @@ function normalizeGmailMessage(md){
     requiresApproval:true,
     confidence:'medium'
   };
+}
+function gmailDateValue(email){
+  const value=new Date(email?.date||email?.receivedAt||0).getTime();
+  return Number.isFinite(value)?value:0;
+}
+function sortEmailsNewestFirst(emails=[]){
+  return emails.slice().sort((a,b)=>gmailDateValue(b)-gmailDateValue(a));
 }
 function classifyEmail(email,rules=[]){
   const text=[email.subject,email.snippet,email.bodyPreview,email.bodyText,email.from?.email].join(' ').toLowerCase();
@@ -3180,7 +5633,7 @@ async function recentEmailActions(userId,limit=200){
   }
   return (valStore().emailActionLog||[]).filter(a=>a.tenantId===tenantId()&&a.userId===userId).slice(-limit).reverse();
 }
-async function fetchGmailMessages({userId=currentUserId(),tenantId:tenantIdValue=tenantId(),query='newer_than:7d',maxResults=25,includeBody=false}={}){
+async function fetchGmailMessages({userId=currentUserId(),tenantId:tenantIdValue=tenantId(),query='in:inbox newer_than:2d',maxResults=25,includeBody=false}={}){
   await ensureGoogleTokensLoaded();
   const token=await getGoogleToken();
   if(token) await hydrateGoogleTokenScopes(token);
@@ -3189,21 +5642,21 @@ async function fetchGmailMessages({userId=currentUserId(),tenantId:tenantIdValue
   if(!token)return {emails:[],needsAuth:true,missingScopes:missingGoogleScopes(['https://www.googleapis.com/auth/gmail.readonly']),error:lastGoogleAuthError||'Google auth required',provider:'gmail',userId,tenantId:tenantIdValue};
   const limit=Math.min(Number(maxResults)||20,100);
   const searchUrl=`https://www.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=${encodeURIComponent(limit)}`;
-  const r=await fetch(searchUrl,{headers:{Authorization:`Bearer ${token}`}});
-  const d=await readJsonResponse(r);
-  if(!r.ok) return {emails:[],needsAuth:r.status===401,error:d.error?.message||`Gmail ${r.status}`,provider:'gmail',missingScopes:missingGoogleScopes(['https://www.googleapis.com/auth/gmail.readonly']),userId,tenantId:tenantIdValue};
+  let d;
+  try{d=await gmailFetchJson(searchUrl,{},'Gmail message search');}
+  catch(e){return {emails:[],needsAuth:/auth|token|permission|scope|401/i.test(e.message),error:e.message,provider:'gmail',missingScopes:missingGoogleScopes(['https://www.googleapis.com/auth/gmail.readonly']),query,userId,tenantId:tenantIdValue};}
   const messages=d.messages||[];
   const details=await mapWithConcurrency(messages.slice(0,limit),5,async m=>{
     const format=includeBody?'full':'full';
-    const mr=await fetch(`https://www.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=${format}`,{headers:{Authorization:`Bearer ${token}`}});
-    const md=await readJsonResponse(mr);
-    if(!mr.ok) return null;
-    return normalizeGmailMessage(md);
+    try{
+      const md=await gmailFetchJson(`https://www.googleapis.com/gmail/v1/users/me/messages/${m.id}?format=${format}`,{},'Gmail message detail');
+      return normalizeGmailMessage(md);
+    }catch(e){return null;}
   });
-  return {emails:details.filter(Boolean),needsAuth:false,provider:'gmail',missingScopes:missingGoogleScopes(['https://www.googleapis.com/auth/gmail.readonly']),query,userId,tenantId:tenantIdValue};
+  return {emails:sortEmailsNewestFirst(details.filter(Boolean)),needsAuth:false,provider:'gmail',missingScopes:missingGoogleScopes(['https://www.googleapis.com/auth/gmail.readonly']),query,userId,tenantId:tenantIdValue,fetchedAt:new Date().toISOString(),resultCount:messages.length};
 }
 async function fetchUnifiedGmailEmails(limit=20){
-  return fetchGmailMessages({query:'newer_than:14d',maxResults:limit});
+  return fetchGmailMessages({query:'in:inbox newer_than:2d',maxResults:limit});
 }
 function normalizeOutlookMessage(m){
   const from=m.from?.emailAddress||{};
@@ -3239,6 +5692,105 @@ async function fetchUnifiedOutlookEmails(limit=20){
   const d=await readJsonResponse(r);
   if(!r.ok)return {emails:[],needsAuth:r.status===401,error:d.error?.message||`Microsoft Graph ${r.status}`,provider:'outlook'};
   return {emails:(d.value||[]).map(normalizeOutlookMessage),needsAuth:false,provider:'outlook'};
+}
+
+function inboxCommandIntent(text=''){
+  return /\b(email|inbox|gmail|outlook|message|thread|invoice|attachment|forward|reply|draft|summarize|what did|find|search)\b/i.test(String(text||''))&&/\b(email|inbox|gmail|outlook|message|thread|invoice|attachment|forward|reply|draft|summarize|said|sent|from|about|find|search)\b/i.test(String(text||''));
+}
+function inboxSearchTerms(text=''){
+  const raw=String(text||'');
+  const quoted=[...raw.matchAll(/"([^"]+)"/g)].map(m=>m[1].trim()).filter(Boolean);
+  const email=[...raw.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig)].map(m=>m[0].toLowerCase());
+  const fromMatch=raw.match(/\bfrom\s+([A-Z][A-Za-z0-9._%+-]*(?:\s+[A-Z][A-Za-z0-9._%+-]*)?|[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,})/i);
+  const aboutMatch=raw.match(/\b(?:about|regarding|re:|on)\s+([^?.!,;]+)/i);
+  const cleaned=raw.toLowerCase().replace(/"[^"]+"/g,' ').replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g,' ').replace(/\b(find|search|show|pull|open|what|did|does|say|said|email|emails|message|messages|thread|gmail|outlook|inbox|from|about|regarding|last|this|that|the|a|an|to|for|me|my|please|can|you|forward|draft|reply|summarize|summary|next|week|month|today|yesterday)\b/g,' ').replace(/[^a-z0-9\s-]/g,' ');
+  const terms=[...quoted,...email];
+  if(fromMatch)terms.push(fromMatch[1].trim());
+  if(aboutMatch)terms.push(...aboutMatch[1].split(/\s+/).filter(Boolean).slice(0,5));
+  terms.push(...cleaned.split(/\s+/).filter(w=>w.length>2).slice(0,8));
+  return [...new Set(terms.map(t=>String(t||'').trim()).filter(Boolean))].slice(0,12);
+}
+function inboxWindowQuery(text=''){
+  const lower=String(text||'').toLowerCase();
+  if(/\btoday\b/.test(lower))return 'newer_than:2d';
+  if(/\byesterday\b/.test(lower))return 'newer_than:3d';
+  if(/\blast\s+month\b/.test(lower))return 'newer_than:60d';
+  if(/\blast\s+week\b|\bnext\s+week\b|\bthis\s+week\b/.test(lower))return 'newer_than:21d';
+  return 'newer_than:90d';
+}
+function gmailQueryFromInboxCommand(text=''){
+  const terms=inboxSearchTerms(text).filter(t=>!/@/.test(t)||/from|to/i.test(text));
+  const sender=(String(text||'').match(/\bfrom\s+([A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|[A-Za-z][A-Za-z0-9._%+-]*)/i)||[])[1]||'';
+  const parts=[inboxWindowQuery(text)];
+  if(sender)parts.push(`from:${sender.replace(/"/g,'')}`);
+  for(const term of terms.slice(0,6)){
+    const clean=term.replace(/"/g,'').trim();
+    if(clean&&clean.toLowerCase()!==sender.toLowerCase())parts.push(/\s/.test(clean)?`"${clean}"`:clean);
+  }
+  return parts.join(' ');
+}
+function emailSearchScore(email,terms){
+  const hay=[email.subject,email.from?.name,email.from?.email,email.snippet,email.bodyPreview,email.bodyText,(email.to||[]).map(t=>t.email).join(' ')].join(' ').toLowerCase();
+  return terms.reduce((score,term)=>score+(hay.includes(String(term).toLowerCase())?1:0),0);
+}
+function inboxEmailSource(email){
+  return {provider:email.provider,messageId:email.messageId,threadId:email.threadId,subject:email.subject,from:email.from,date:email.date||email.receivedAt,snippet:email.bodyPreview||email.snippet||'',webLink:email.webLink||'',hasAttachments:!!email.hasAttachments,labels:email.labels||[]};
+}
+const emailProviders={
+  gmail:{async search({query,maxResults=15}){return fetchGmailMessages({query:gmailQueryFromInboxCommand(query),maxResults,includeBody:true});}},
+  outlook:{async search({query,maxResults=15}){
+    const result=await fetchUnifiedOutlookEmails(Math.max(maxResults,75));
+    const terms=inboxSearchTerms(query);
+    const emails=sortEmailsNewestFirst((result.emails||[]).map(e=>({...e,_score:emailSearchScore(e,terms)}))).filter(e=>!terms.length||e._score>0).slice(0,maxResults);
+    return {...result,emails,query};
+  }}
+};
+async function runInboxCommand(query,{maxResults=8}={}){
+  const terms=inboxSearchTerms(query);
+  const [gmail,outlook]=await Promise.all([
+    emailProviders.gmail.search({query,maxResults:Math.max(maxResults,15)}).catch(e=>({emails:[],error:e.message,provider:'gmail'})),
+    emailProviders.outlook.search({query,maxResults:Math.max(maxResults,15)}).catch(e=>({emails:[],error:e.message,provider:'outlook'}))
+  ]);
+  const emails=sortEmailsNewestFirst([...(gmail.emails||[]),...(outlook.emails||[])].map(e=>({...e,_score:emailSearchScore(e,terms)}))).filter(e=>!terms.length||e._score>0).slice(0,maxResults);
+  const sources=emails.map(inboxEmailSource);
+  const answer=emails.length?`I found ${emails.length} likely email${emails.length===1?'':'s'}. The best match is "${emails[0].subject||'(No subject)'}" from ${emails[0].from?.name||emails[0].from?.email||'unknown sender'}.`:'I could not find a matching email in the connected inbox windows. Try a sender, subject word, or date range.';
+  const errors=[gmail.error&&`Gmail: ${gmail.error}`,outlook.error&&`Outlook: ${outlook.error}`].filter(Boolean);
+  return {ok:true,query,gmailQuery:gmailQueryFromInboxCommand(query),terms,answer,results:sources,emails:sources,sources,errors,needsChoice:emails.length>1};
+}
+async function resolveInboxRecipient(value=''){
+  const raw=String(value||'').trim();
+  const email=(raw.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)||[])[0];
+  if(email)return {ok:true,email:email.toLowerCase(),name:raw.replace(email,'').replace(/[<>"]/g,'').trim()};
+  const current=currentValUser();
+  if(raw&&current?.email&&new RegExp(`\\b(${current.name||current.email.split('@')[0]||'me'}|me)\\b`,'i').test(raw))return {ok:true,email:current.email,name:current.name||current.email};
+  const resolved=await resolveContactFromContext({name:raw,email:raw}).catch(()=>null);
+  const contact=resolved?.contact||{};
+  if(contact.email)return {ok:true,email:contact.email,name:contact.name||raw,contact};
+  return {ok:false,error:`I could not resolve "${raw}" to one email address. Please provide the recipient email.`};
+}
+async function inboxCommandAction(body={},userId=currentUserId()){
+  const action=String(body.action||body.actionType||'').trim();
+  const email=body.email||body.message||{};
+  if(!email.messageId&&!email.subject)return {ok:false,error:'Choose an email first.'};
+  if(action==='draft_reply'){
+    const draft=await saveInternalDraft({draftType:'email_reply',provider:'internal',subject:'Re: '+(email.subject||''),body:body.body||`Hi ${email.from?.name||''},\n\nThank you for your note. I wanted to respond thoughtfully.\n\n[VAL draft: review before sending.]\n\nBest,`,sourceContext:{source:'inbox_command',provider:email.provider,messageId:email.messageId,threadId:email.threadId,to:email.from?.email||''}});
+    return {ok:true,action,draft,requiresApproval:true};
+  }
+  if(action==='forward_draft'||action==='forward'){
+    const recipient=await resolveInboxRecipient(body.to||body.recipient||'');
+    if(!recipient.ok)return {ok:false,needsRecipient:true,error:recipient.error};
+    const sensitive=/invoice|contract|legal|financial|payment|confidential|medical|hr/i.test([email.subject,email.snippet].join(' '));
+    const draft=await saveInternalDraft({draftType:'email_forward',provider:'internal',subject:'Fwd: '+(email.subject||''),body:body.body||`Forwarding this for review.\n\nOriginal from: ${email.from?.email||email.from?.name||''}\nSubject: ${email.subject||''}\nDate: ${email.date||''}\n\n${email.snippet||''}`,sourceContext:{source:'inbox_command',provider:email.provider,messageId:email.messageId,threadId:email.threadId,forwardTo:recipient.email,recipientName:recipient.name||'',hasAttachments:!!email.hasAttachments,sensitive}});
+    return {ok:true,action:'forward_draft',draft,recipient,requiresApproval:true,warning:email.hasAttachments?'This email has attachments. VAL created a safe forward draft; verify attachments before sending.':(sensitive?'Sensitive content may be present. Review before sending.':'')};
+  }
+  if(action==='create_task'){
+    const task={id:uuid('task'),title:body.title||`Review email: ${email.subject||'(No subject)'}`,contactName:email.from?.name||email.from?.email||'',dueDate:body.dueDate||null,notes:[`Created from Inbox Command.`,email.snippet||'',email.webLink||''].filter(Boolean).join('\n'),details:[{text:`Source email ${email.provider||''}:${email.messageId||''}`,ts:new Date().toISOString()}],completed:false,createdAt:new Date().toISOString()};
+    await saveTask(task);return {ok:true,action,task};
+  }
+  if(action==='summarize'){
+    return {ok:true,action,summary:`${email.subject||'(No subject)'} — ${email.snippet||'No preview available.'}`,source:email};
+  }
+  return {ok:false,error:'Unsupported Inbox Command action.'};
 }
 
 function normalizeAttendee(attendee){
@@ -3548,6 +6100,25 @@ async function recentMemoryItems(days=30,limit=120){
   }
   return (valStore().memoryItems||[]).filter(m=>new Date(m.createdAt||0)>=new Date(since)).slice(0,limit);
 }
+async function condenseOlderMemory(){
+  await valDbReady;
+  const cutoff=new Date(Date.now()-30*24*60*60*1000),items=[];
+  if(DEMO_MODE)return {ok:true,created:0,keptOriginals:true,demo:true};
+  if(pgPool){
+    const r=await dbQuery("select id,kind,summary,raw_text,metadata,created_at from val_memory_items where user_id=$1 and created_at < $2 and kind <> 'memory_condensation' order by created_at asc limit 500",[VAL_USER_ID,cutoff.toISOString()]);
+    items.push(...r.rows.map(x=>({id:x.id,kind:x.kind,summary:x.summary||'',rawText:x.raw_text||'',metadata:x.metadata||{},createdAt:x.created_at?.toISOString()||''})));
+  }else items.push(...(valStore().memoryItems||[]).filter(x=>new Date(x.createdAt||0)<cutoff&&x.kind!=='memory_condensation').slice(0,500));
+  if(!items.length)return {ok:true,created:0,keptOriginals:true};
+  const groups={};items.forEach(item=>{const d=new Date(item.createdAt||0),key=isNaN(d)?'undated':d.toISOString().slice(0,7);(groups[key]=groups[key]||[]).push(item);});
+  let created=0;
+  for(const [month,rows] of Object.entries(groups)){
+    const sourceIds=rows.map(x=>x.id),fingerprint=crypto.createHash('sha256').update(sourceIds.join('|')).digest('hex').slice(0,20);
+    const existing=await recentMemoryItems(3650,1000).catch(()=>[]);if(existing.some(x=>x.kind==='memory_condensation'&&x.metadata?.fingerprint===fingerprint))continue;
+    const highlights=rows.sort((a,b)=>Number(b.importance||1)-Number(a.importance||1)).slice(0,40).map(x=>`[${x.kind}] ${x.summary||String(x.rawText||'').slice(0,240)}`).join('\n');
+    await saveMemoryItem({kind:'memory_condensation',summary:`Condensed VAL memory for ${month} (${rows.length} original items retained)`,rawText:highlights,importance:4,metadata:{fingerprint,month,sourceIds,sourceCount:rows.length,keptOriginals:true,condensedAt:new Date().toISOString()}});created++;
+  }
+  return {ok:true,created,sourceItems:items.length,keptOriginals:true};
+}
 function relationshipScore(contact){
   const ev=contact.evidence||[];
   const hasPipeline=ev.some(e=>e.type==='opportunity');
@@ -3590,11 +6161,44 @@ function draftRelationshipOutreach(contact){
 function relationshipProfile(contact){
   return {
     name:contact.name,company:contact.company||'',email:contact.email||'',score:contact.score,scoreBreakdown:contact.scoreBreakdown,
-    relationshipSummary:contact.reason,recentTopics:contact.topics||[],openLoops:contact.openLoops||[],
+    relationshipType:contact.relationshipType||'Professional',relationshipSummary:contact.reason,recentTopics:contact.topics||[],openLoops:contact.openLoops||[],
     lastMeaningfulInteraction:contact.lastInteractionAt||'',strategicValue:contact.strategicValue||'Evidence-based relationship priority.',
     opportunitySignals:contact.opportunitySignals||[],riskSignals:contact.riskSignals||[],suggestedNextAction:contact.recommendedAction,
-    suggestedOutreach:contact.draftOutreach,relatedContacts:contact.relatedContacts||[],tags:contact.tags||[]
+    suggestedOutreach:contact.draftOutreach,relatedContacts:contact.relatedContacts||[],tags:contact.tags||[],evidence:contact.evidence||[],evidenceCount:(contact.evidence||[]).length,contactId:contact.contactId||contact.id||''
   };
+}
+function relationshipOwnerIdentity(){
+  const emails=[process.env.ADMIN_EMAIL,process.env.VAL_OWNER_EMAIL,process.env.GMAIL_USER_EMAIL,process.env.OUTLOOK_USER_EMAIL]
+    .concat(String(process.env.VAL_OWNER_ALIASES||'').split(',')).map(normalizeContextEmail).filter(Boolean);
+  const names=[process.env.ADMIN_NAME,process.env.VAL_CLIENT_NAME,CLIENT_CONFIG.clientName,process.env.VAL_OWNER_NAME]
+    .concat(String(process.env.VAL_OWNER_ALIASES||'').split(',')).map(normalizeContextName).filter(Boolean);
+  return {emails:new Set(emails),names:new Set(names)};
+}
+function isOwnerRelationship(candidate={},owner=relationshipOwnerIdentity()){
+  const email=normalizeContextEmail(candidate.email||candidate.contactEmail||'');
+  const name=normalizeContextName(candidate.name||candidate.contactName||'');
+  if(email&&owner.emails.has(email)) return true;
+  if(name&&owner.names.has(name)) return true;
+  if(name&&[...owner.names].some(alias=>looseNameScore(name,alias)>=0.8)) return true;
+  return candidate.self===true||candidate.organizer===true&&(!email||owner.emails.has(email));
+}
+function isMeaningfulRelationshipEmail(email={}){
+  const from=`${email.from?.name||''} ${email.from?.email||''}`.toLowerCase();
+  const subject=String(email.subject||'').toLowerCase();
+  if(/mailsuite|mailtrack|email tracking|tracking notification/.test(from+' '+subject)) return false;
+  if(/^(opened:|email opened|link clicked|your email was opened)/.test(subject)) return false;
+  return true;
+}
+function relationshipEmailParticipants(email={}){
+  const values=[email.from,...(email.to||[]),...(email.cc||[])].filter(Boolean);
+  return values.map(v=>({name:v.name||v.displayName||'',email:v.email||v.address||''}));
+}
+function synthesizeRelationshipSummary(contact={}){
+  const types=[...new Set((contact.evidence||[]).map(e=>e.type))];
+  const context=contact.company?`${contact.name} is connected to ${contact.company}.`:`${contact.name} is an external relationship worth understanding.`;
+  const recent=contact.lastEvidenceSummary?` Recent activity includes ${String(contact.lastEvidenceSummary).replace(/\s+/g,' ').slice(0,180)}.`:'';
+  const why=(contact.opportunitySignals||[]).length?' There is a live opportunity, referral, or partnership signal.':(contact.openLoops||[]).length?' An open commitment makes timely follow-through important.':` Evidence comes from ${types.join(', ')||'connected activity'}.`;
+  return `${context}${recent}${why} ${contact.recommendedAction||'Review the relationship and choose one useful next move.'}`.replace(/\s+/g,' ').trim();
 }
 async function buildRelationshipReview({windowDays=7}={}){
   const now=new Date();
@@ -3603,12 +6207,18 @@ async function buildRelationshipReview({windowDays=7}={}){
   const future=new Date(now);future.setDate(future.getDate()+14);
   const people=new Map();
   const errors=[];
+  const owner=relationshipOwnerIdentity();
   function touch({name='',email='',company='',tags=[]}){
-    const key=personKey(name,email);
-    if(!people.has(key)) people.set(key,{key,name:cleanPersonName(name,email),email:String(email||'').toLowerCase(),company:company||'',tags:[],evidence:[],openLoops:[],opportunitySignals:[],riskSignals:[],topics:[],relatedContacts:[]});
-    const p=people.get(key);
+    const cleanName=cleanPersonName(name,email),cleanEmail=normalizeContextEmail(email);
+    if(isOwnerRelationship({name:cleanName,email:cleanEmail},owner)||(!cleanEmail&&(!cleanName||cleanName==='Unknown'))) return null;
+    if(/^(no.?reply|notifications?|mailer-daemon)@/i.test(cleanEmail)) return null;
+    const normalizedName=normalizeContextName(cleanName),normalizedCompany=normalizeContextName(company);
+    let p=[...new Set(people.values())].find(existing=>(cleanEmail&&existing.email===cleanEmail)||(normalizedName&&normalizeContextName(existing.name)===normalizedName)||(normalizedName&&normalizedCompany&&normalizeContextName(existing.company)===normalizedCompany&&looseNameScore(existing.name,cleanName)>=0.5));
+    const key=personKey(cleanName,cleanEmail);
+    if(!p){p={key,name:cleanName,email:cleanEmail,company:company||'',tags:[],evidence:[],openLoops:[],opportunitySignals:[],riskSignals:[],topics:[],relatedContacts:[]};}
+    people.set(key,p);
     if(name&&(!p.name||p.name==='Unknown')) p.name=cleanPersonName(name,email);
-    if(email&&!p.email) p.email=String(email).toLowerCase();
+    if(cleanEmail&&!p.email) p.email=cleanEmail;
     if(company&&!p.company) p.company=company;
     p.tags=Array.from(new Set((p.tags||[]).concat(tags||[]).filter(Boolean)));
     return p;
@@ -3628,61 +6238,77 @@ async function buildRelationshipReview({windowDays=7}={}){
     const topic=String(evidence.summary||'').split(/[.!?]/)[0].slice(0,90);
     if(topic) person.topics=Array.from(new Set((person.topics||[]).concat(topic))).slice(0,8);
   }
-  const [gmail,outlook,tasks,transcripts,memory,ghlEvents,googleEvents,pipeline]=await Promise.all([
+  const [gmail,outlook,tasks,transcripts,memory,preferenceMemory,ghlEvents,googleEvents,pipeline]=await Promise.all([
     fetchGmailMessages({query:'newer_than:45d',maxResults:60}).catch(e=>{errors.push('Gmail: '+e.message);return {emails:[],error:e.message};}),
     fetchUnifiedOutlookEmails(60).catch(e=>{errors.push('Outlook: '+e.message);return {emails:[],error:e.message};}),
     loadTasks().catch(e=>{errors.push('Tasks: '+e.message);return [];}),
     recentTranscripts(45).catch(e=>{errors.push('Transcripts: '+e.message);return [];}),
     recentMemoryItems(45,120).catch(e=>{errors.push('Memory: '+e.message);return [];}),
+    recentMemoryItems(365,300).catch(()=>[]),
     fetchGhlCalendarEvents(widerPast,future).catch(e=>{errors.push('GHL calendar: '+e.message);return [];}),
     fetchGoogleCalendarEvents(widerPast,future,150).catch(e=>{errors.push('Google calendar: '+e.message);return [];}),
     fetchGhlOpportunities({status:'open',limit:100}).catch(e=>{errors.push('Pipeline: '+e.message);return {data:{opportunities:[]}};})
   ]);
+  const preferences=new Map();
+  for(const mem of preferenceMemory.filter(m=>m&&m.kind==='relationship_preference').sort((a,b)=>interactionDate(a.createdAt)-interactionDate(b.createdAt))){
+    const pref=mem.metadata||parseLeadJson(mem.rawText)||{};const c=pref.contact||{};
+    preferences.set(personKey(c.name,c.email),{action:pref.action||'',until:pref.until||'',createdAt:mem.createdAt||''});
+  }
   for(const email of (gmail.emails||[]).concat(outlook.emails||[])){
-    const sender=touch({name:email.from?.name,email:email.from?.email});
-    addEvidence(sender,relationshipEvidence('email',`${email.subject||'(No subject)'}: ${email.snippet||email.bodyPreview||''}`,email.receivedAt,'high',email.messageId));
+    if(!email) continue;
+    if(!isMeaningfulRelationshipEmail(email)) continue;
+    const evidence=relationshipEvidence('email',`${email.subject||'(No subject)'}: ${email.snippet||email.bodyPreview||''}`,email.receivedAt||email.date,'high',email.messageId);
+    relationshipEmailParticipants(email).filter(person=>!isOwnerRelationship(person,owner)).forEach(person=>addEvidence(touch(person),evidence));
   }
   for(const ev of ghlEvents.concat(googleEvents)){
+    if(!ev) continue;
     inferAttendeesFromEvent(ev).forEach(a=>{
       const p=touch({name:a.name,email:a.email});
       addEvidence(p,relationshipEvidence('meeting',`${ev.title||ev.summary||'Meeting'}${ev.startTime?' on '+new Date(ev.startTime).toLocaleDateString('en-US'):''}`,ev.startTime,'high',ev.id));
     });
   }
-  for(const task of tasks.filter(t=>!t.completed)){
+  for(const task of tasks.filter(t=>t&&!t.completed)){
     const p=touch({name:task.contactName||''});
-    if(p.name==='Unknown') continue;
+    if(!p||p.name==='Unknown') continue;
     addEvidence(p,relationshipEvidence('task',task.title+(task.notes?': '+task.notes:''),task.createdAt||task.dueDate,'high',task.id));
   }
   for(const tr of transcripts){
+    if(!tr) continue;
     splitPeopleFromText([tr.title,tr.rawText].join(' ')).forEach(person=>{
       const p=touch(person);
       addEvidence(p,relationshipEvidence('transcript',`${tr.title||'Transcript'}: ${String(tr.rawText||'').slice(0,220)}`,tr.createdAt,person.confidence,tr.id));
     });
   }
-  for(const mem of memory){
+  for(const mem of memory.filter(m=>m&&m.kind!=='relationship_preference')){
     splitPeopleFromText([mem.summary,mem.rawText].join(' ')).forEach(person=>{
       const p=touch(person);
       addEvidence(p,relationshipEvidence('memory',`${mem.summary||mem.kind}: ${String(mem.rawText||'').slice(0,220)}`,mem.createdAt,person.confidence,mem.id));
     });
   }
   for(const o of (pipeline.data?.opportunities||[])){
+    if(!o) continue;
     const c=o.contact||{};
     const p=touch({name:c.name||o.contactName||o.name,email:c.email||o.contactEmail,company:o.name});
     addEvidence(p,relationshipEvidence('opportunity',`${o.name||'Open opportunity'}${o.monetaryValue?' worth $'+o.monetaryValue:''}${o.status?' is '+o.status:''}`,o.updatedAt||o.lastStatusChangeAt,'high',o.id));
   }
-  for(const p of people.values()){
+  for(const p of new Set(people.values())){
     const introCount=p.evidence.filter(e=>/intro|introduction|connect|referral|referred/i.test(e.summary)).length;
     p.superConnector=introCount>=2;
     if(p.superConnector) p.tags.push('Super Connector');
     p.lastInteractionDays=daysSince(p.lastInteractionAt);
+    const pref=preferences.get(personKey(p.name,p.email))||preferences.get(personKey(p.name,''))||{};
+    p.manualVip=pref.action==='mark_vip';p.notImportant=pref.action==='not_important';p.snoozedUntil=pref.action==='snooze'?pref.until:'';
     p.scoreBreakdown=relationshipScore(p);
     p.score=p.scoreBreakdown.total;
-    p.reason=[p.score>=70?'High priority relationship':'Relationship worth tracking',p.lastEvidenceSummary||'Evidence found across connected systems'].join(': ');
+    if(p.manualVip){p.score=Math.min(100,p.score+20);p.tags.push('VIP');}
+    if(p.notImportant)p.score=Math.max(0,p.score-40);
     p.recommendedAction=recommendedRelationshipAction(p);
+    p.relationshipType=p.manualVip?'VIP':p.superConnector?'Connector':p.scoreBreakdown.opportunityPotential>=10?'Opportunity':p.company?'Professional':'Personal';
+    p.reason=synthesizeRelationshipSummary(p);
     p.draftOutreach=draftRelationshipOutreach(p);
     p.profile=relationshipProfile(p);
   }
-  const contacts=Array.from(people.values()).filter(p=>p.name&&p.name!=='Unknown'&&p.evidence.length).sort((a,b)=>b.score-a.score).slice(0,80);
+  const contacts=[...new Set(people.values())].filter(p=>p.name&&p.name!=='Unknown'&&p.evidence.length&&!isOwnerRelationship(p,owner)&&!p.notImportant&&(!p.snoozedUntil||new Date(p.snoozedUntil)<=now)).sort((a,b)=>b.score-a.score).slice(0,80);
   const topRelationshipPriorities=contacts.slice(0,10);
   const highestLeverageRelationships=contacts.filter(c=>c.scoreBreakdown.strategicImportance>=10||c.superConnector||c.scoreBreakdown.opportunityPotential>=10).slice(0,8);
   const coolingRelationships=contacts.filter(c=>c.lastInteractionDays!==null&&c.lastInteractionDays>=14&&c.score>=35).sort((a,b)=>b.score-a.score).slice(0,8);
@@ -3778,21 +6404,9 @@ function classifyEmail(email){
   return 'general';
 }
 
-function validEmail(email){
-  const value=String(email||'').trim();
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function validPhone(phone){
-  const value=String(phone||'').trim();
-  if(!value) return false;
-  const digits=value.replace(/\D/g,'');
-  return digits.length>=10 && digits.length<=15;
-}
-
 function leadContactability(lead={}){
-  const rawEmail=lead.email||lead.verifiedEmail||lead.decisionMakerEmail||lead.decision_maker_email||'';
-  const rawPhone=lead.phone||lead.verifiedPhone||lead.decisionMakerPhone||lead.decision_maker_phone||'';
+  const rawEmail=lead.email||lead.verifiedEmail||'';
+  const rawPhone=lead.phone||lead.verifiedPhone||'';
   const hasEmail=validEmail(rawEmail);
   const hasPhone=validPhone(rawPhone);
   let contactabilityStatus='not_contactable';
@@ -3806,10 +6420,10 @@ function leadContactability(lead={}){
     emailEligibility:hasEmail,
     phoneEligibility:hasPhone,
     initialEmailSent:hasEmail,
-    email:hasEmail?String(rawEmail).trim():'',
-    phone:hasPhone?String(rawPhone).trim():'',
-    importable:hasEmail||hasPhone,
-    rejectionReason:hasEmail||hasPhone?'':'missing_email_and_phone'
+    email:hasEmail?normalizeEmailAddress(rawEmail):'',
+    phone:hasPhone?normalizePhoneNumber(rawPhone):'',
+    importable:true,
+    rejectionReason:''
   };
 }
 
@@ -3817,7 +6431,7 @@ function leadContactabilityNote(c){
   if(c.contactabilityStatus==='full_contactability') return 'Email and phone available. Lead eligible for automated email, SMS, AI calling, and manual outreach.';
   if(c.contactabilityStatus==='email_only') return 'Email available. No valid phone number found. Lead eligible for automated email and manual email outreach.';
   if(c.contactabilityStatus==='phone_only') return 'No email address found. Lead did not receive the initial automated email sequence. Lead should enter phone-first outreach workflows and is eligible for AI calling, SMS outreach, and manual calling.';
-  return 'No email or phone number was found. Do not create an outreach-ready contact unless company intelligence is strong enough for manual review routing.';
+  return 'No email or phone number was found. Lead imported for visibility, but it is not eligible for automated email, SMS, AI calling, or manual contact until a contact method is added.';
 }
 
 function normalizeRocketReachPerson(data){
@@ -3860,8 +6474,14 @@ async function lookupRocketReach(attendee){
   if(attendee.company) params.set('current_employer',attendee.company);
   if(attendee.title || attendee.currentTitle) params.set('current_title',attendee.title || attendee.currentTitle);
   const url = `${ROCKETREACH_BASE_URL.replace(/\/$/,'')}/person/lookup?${params.toString()}`;
-  const response = await fetch(url,{headers:{'Api-Key':rocketReachKey}});
-  const data = await readJsonResponse(response);
+  let response;
+  let data={};
+  for(let attempt=0;attempt<2;attempt+=1){
+    response=await fetchWithTimeout(url,{headers:{'Api-Key':rocketReachKey}},ROCKETREACH_REQUEST_TIMEOUT_MS,'RocketReach lookup');
+    data=await readJsonResponse(response);
+    if(![502,503,504].includes(response.status) || attempt===1) break;
+    await sleep(750);
+  }
   if(response.status===429){
     rocketReachLimitedUntil = Date.now() + 10*60*1000;
     return {configured:true, error:'RocketReach 429 rate limit'};
@@ -3870,7 +6490,7 @@ async function lookupRocketReach(attendee){
   return {configured:true, data:normalizeRocketReachPerson(data)};
 }
 
-async function lookupRocketReachDecisionMaker(company,lead={}){
+async function lookupRocketReachDecisionMaker(company,lead={},options={}){
   const titles=[
     'Owner',
     'Founder',
@@ -3887,7 +6507,8 @@ async function lookupRocketReachDecisionMaker(company,lead={}){
     }).catch(e=>({configured:!!ROCKETREACH_API_KEY,error:e.message}));
     if(exact.data?.name || exact.data?.email || exact.data?.phone) return {...exact,matchTitle:lead.decisionMakerTitle||''};
   }
-  for(const title of titles){
+  const maxTitleLookups=Math.min(Math.max(Number(options.maxTitleLookups)||titles.length,1),titles.length);
+  for(const title of titles.slice(0,maxTitleLookups)){
     const rr=await lookupRocketReach({company,name:'',title,currentTitle:title}).catch(e=>({configured:!!ROCKETREACH_API_KEY,error:e.message}));
     if(rr.error && /rate limit/i.test(rr.error)) return rr;
     if(rr.data?.name || rr.data?.email || rr.data?.phone) return {...rr,matchTitle:title};
@@ -3903,32 +6524,6 @@ function normalizeCompanyForMatch(value){
     .replace(/[^a-z0-9]+/g,' ')
     .replace(/\s+/g,' ')
     .trim();
-}
-
-function isReliablePersonName(name){
-  const raw=String(name||'').replace(/\s+/g,' ').trim();
-  if(!raw) return false;
-  const words=raw.split(/\s+/).filter(Boolean);
-  if(words.length<2 || words.length>4) return false;
-  if(/^(and|or|of|for|to|the|who|what|when|where|why|how|about|with|from|in|on|by)\b/i.test(raw)) return false;
-  if(/\b(services?|company|contractors?|electric|electrical|plumbing|hvac|heating|cooling|roofing|insulation|field|supervisor|manager|office|team|staff|department|careers?|jobs?|review|reviews?|gets?|let|licensed|commercial|residential|phoenix|mesa|chandler|scottsdale|az|arizona)\b/i.test(raw)) return false;
-  if(/[0-9@/\\]/.test(raw)) return false;
-  return words.every(w=>/^[A-Z][A-Za-z.'’,-]*$/.test(w));
-}
-
-function sanitizeDecisionMaker(p={}){
-  const name=String(p.decisionMakerName||'').replace(/\s+/g,' ').trim();
-  if(!name) return p;
-  if(isReliablePersonName(name)) return p;
-  return {
-    ...p,
-    decisionMakerName:'',
-    decisionMakerTitle:'',
-    decisionMakerSource:'',
-    linkedinPersonalUrl:'',
-    linkedinMatchConfidence:'low',
-    linkedinMatchNotes:`Rejected unreliable decision-maker text: ${name}`
-  };
 }
 
 function apolloPersonTitles(){
@@ -4007,7 +6602,7 @@ async function lookupApolloDecisionMaker(lead={}){
   params.set('page','1');
   params.set('per_page','10');
   const url=`${APOLLO_BASE_URL.replace(/\/$/,'')}/mixed_people/api_search?${params.toString()}`;
-  const response=await fetch(url,{
+  const response=await fetchWithTimeout(url,{
     method:'POST',
     headers:{
       accept:'application/json',
@@ -4015,7 +6610,7 @@ async function lookupApolloDecisionMaker(lead={}){
       'x-api-key':apolloKey,
       Authorization:`Bearer ${apolloKey}`
     }
-  });
+  },APOLLO_REQUEST_TIMEOUT_MS,'Apollo decision-maker lookup');
   const data=await readJsonResponse(response);
   if(!response.ok) return {configured:true,error:data.message || data.error || `Apollo ${response.status}`};
   const rawPeople=[...(data.people||[]),...(data.contacts||[]),...(data.persons||[])];
@@ -4093,6 +6688,44 @@ app.post('/api/val/meeting-intel',async(req,res)=>{
       outscraperConfigured:!!OUTSCRAPER_API_KEY && !!OUTSCRAPER_LINKEDIN_POSTS_URL
     }});
   }catch(e){ res.status(500).json({error:e.message}); }
+});
+
+function deepgramModelName(value){
+  return String(value||'').trim().replace(/[^a-zA-Z0-9_.:-]/g,'').slice(0,120);
+}
+function deepgramTtsModel(){
+  return deepgramModelName(DEEPGRAM_TTS_MODEL)||'aura-2-cora-en';
+}
+app.get('/api/val/voice/status',(req,res)=>{
+  res.json({ok:true,provider:'deepgram',ttsConfigured:!!DEEPGRAM_API_KEY,ttsModel:deepgramTtsModel(),voiceResponseTemperature:VAL_VOICE_RESPONSE_TEMPERATURE,sttModel:DEEPGRAM_STT_MODEL,sttEndpointingMs:DEEPGRAM_STT_ENDPOINTING_MS,ttsProxy:true});
+});
+app.post('/api/val/tts',async(req,res)=>{
+  try{
+    const text=String(req.body?.text||'').replace(/\s+/g,' ').trim().slice(0,4000);
+    if(!text) return res.status(400).json({ok:false,error:'No text supplied for voice playback.'});
+    if(!DEEPGRAM_API_KEY) return res.status(503).json({ok:false,error:'Deepgram voice is not configured. Add DEEPGRAM_API_KEY in Railway.'});
+    const model=deepgramTtsModel();
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),20000);
+    let dg;
+    try{
+      dg=await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}`,{method:'POST',headers:{'Authorization':`Token ${DEEPGRAM_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({text}),signal:controller.signal});
+    }finally{clearTimeout(timer);}
+    const contentType=dg.headers.get('content-type')||'audio/mpeg';
+    const buffer=Buffer.from(await dg.arrayBuffer());
+    if(!dg.ok){
+      let detail=buffer.toString('utf8').slice(0,500);
+      try{const parsed=JSON.parse(detail);detail=parsed.err_msg||parsed.message||parsed.error||detail;}catch(_){}
+      console.warn('[voice] Deepgram TTS failed',dg.status,detail);
+      return res.status(dg.status).json({ok:false,error:`Deepgram TTS failed (${dg.status})`,detail});
+    }
+    res.set({'Content-Type':contentType.includes('audio/')?contentType:'audio/mpeg','Cache-Control':'no-store, max-age=0','X-VAL-TTS-Provider':'deepgram','X-VAL-TTS-Model':model});
+    res.send(buffer);
+  }catch(e){
+    const aborted=e.name==='AbortError';
+    console.warn('[voice] TTS proxy failed',e.message);
+    res.status(aborted?504:500).json({ok:false,error:aborted?'Deepgram TTS timed out.':e.message});
+  }
 });
 
 // ════════════════════════════════════════════════════════
@@ -4980,6 +7613,38 @@ app.post('/api/val/leads/import-approved',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message});}
 });
 
+app.post('/api/val/partners/discover-preview',async(req,res)=>{
+  try{
+    const body=req.body||{};
+    const request={
+      ...body,
+      leadProfile:'goall',
+      organizationType:String(body.partnerType||body.organizationType||'strategic distribution partners'),
+      criteria:String(body.criteria||`Find ${body.partnerType||'strategic partner organizations'} that can distribute, recommend, introduce, or sell GOALL. Prioritize ${GOALL_PRIORITY_ASSOCIATIONS.join(', ')} and similar organizations. Use public information, prefer sources updated in the last 12 months, and find at least two supporting source URLs whenever possible. For associations capture industry served, membership size, geographic reach, executive leadership, membership/partnership/events directors, conference details, vendor and sponsor opportunities. For agencies capture agency type, employee/revenue estimates, states licensed, decision makers, and benefits/life/commercial insurance evidence.`),
+      employeeMinimum:1,
+      market:String(body.market||'United States'),
+      limit:Math.min(Math.max(Number(body.limit)||12,1),100),
+      fastSearch:false,
+      rocketReachMode:body.rocketReachMode||'defer'
+    };
+    const discovered=DEMO_MODE?demoLeadDiscovery(request):await withTimeout(discoverHbsLeadProspects(request),GOALL_LEAD_DISCOVERY_TIMEOUT_MS,'partner scrape timed out before results returned');
+    const leads=(discovered.leads||[]).map(lead=>scorePartnerFit({...lead,partnerType:body.partnerType||lead.partnerType}));
+    const result={...discovered,ok:true,prospectingMode:'partners',leadProfile:'partners',partnerTypes:GOALL_PARTNER_TYPES,leads,crmDestination:{pipeline:GHL_PARTNER_PIPELINE_NAME,stage:GHL_PARTNER_STAGE_NAME},researchStandard:{publicOnly:true,preferredFreshnessMonths:12,supportingSourcesPreferred:2}};
+    result.content=partnerPreviewText(result);
+    res.json(result);
+  }catch(e){res.json({ok:false,prospectingMode:'partners',leads:[],error:e.message,content:`Partner scrape could not complete.\n\n${e.message}`});}
+});
+
+app.post('/api/val/partners/import-approved',async(req,res)=>{
+  try{
+    if(DEMO_MODE){
+      const leads=(req.body?.leads||[]).map(scorePartnerFit);
+      return res.json({ok:true,created:leads,failed:[],content:withDemoCta(`Pushed ${leads.length} approved demo strategic partners to GOALL Strategic Partners / New Limitless Lead Added.`)});
+    }
+    res.json(await importApprovedPartnerLeads(req.body||{}));
+  }catch(e){res.status(500).json({error:e.message});}
+});
+
 app.post('/api/val/leads/rocketreach-enrich',async(req,res)=>{
   try{
     const body=req.body||{};
@@ -4990,7 +7655,17 @@ app.post('/api/val/leads/rocketreach-enrich',async(req,res)=>{
       const discovered={...demoLeadDiscovery(body),leads:enriched,rocketReachMode:'review'};
       return res.json({...discovered,content:withDemoCta(leadPreviewText(discovered))});
     }
-    const enriched=await mapWithConcurrency(leads,1,p=>enrichProspect(p,{rocketReachMode:'force'}));
+    const pendingIndexes=leads.map((lead,index)=>({lead,index})).filter(({lead})=>!lead.rocketReachReviewed);
+    const selected=pendingIndexes.slice(0,ROCKETREACH_ENRICH_BATCH_MAX);
+    const enriched=[...leads];
+    const reviewed=await mapWithConcurrency(selected,ROCKETREACH_ENRICH_CONCURRENCY,async({lead,index})=>{
+      const next=await enrichProspectWithRocketReach(lead,{maxTitleLookups:1}).catch(e=>({...lead,rocketReachStatus:e.message}));
+      const attempts=(Number(lead.rocketReachAttempts)||0)+1;
+      const transient=/\b(429|502|503|504|rate.?limit|timed?\s*out|gateway|temporar)/i.test(String(next.rocketReachStatus||''));
+      return {index,lead:sanitizeDecisionMaker({...next,rocketReachAttempts:attempts,rocketReachReviewed:!transient||attempts>=2})};
+    });
+    reviewed.forEach(({index,lead})=>{ enriched[index]=lead; });
+    const remaining=enriched.filter(lead=>!lead.rocketReachReviewed).length;
     const discovered={
       ok:true,
       market:String(body.market||'United States'),
@@ -4999,7 +7674,8 @@ app.post('/api/val/leads/rocketreach-enrich',async(req,res)=>{
       employeeMinimum:donorValue(body.employeeMinimum)||300,
       tag:normalizeLeadTag(body.tag||body.organizationType),
       scraped:body.scraped||body.outscraper||{},
-      rocketReachMode:'review',
+      rocketReachMode:remaining?'defer':'review',
+      rocketReachBatch:{reviewed:selected.length,remaining,total:leads.length},
       leads:enriched
     };
     res.json({...discovered,content:leadPreviewText(discovered)});
@@ -5030,7 +7706,7 @@ app.post('/api/val/leads/enrich-current',async(req,res)=>{
     ].join('\n\n');
     const user=[
       'Audit these current GOALL business leads.',
-      'Goal: check whether phone number, email/contact route, actual decision-maker, employee count, growth signal, workforce signal, and first-call angle look correct.',
+      'Goal: check whether phone number, email/contact route, and actual decision-maker look correct.',
       'Exclude internal test contacts when obvious. Flag unclear or weak data.',
       '',
       JSON.stringify(leads,null,2),
@@ -5044,16 +7720,7 @@ app.post('/api/val/leads/enrich-current',async(req,res)=>{
       'Likely decision-maker:',
       'Decision-maker title:',
       'Decision-maker LinkedIn if public:',
-      'Estimated employee count:',
-      'Employee count confidence:',
-      'Growth signals:',
-      'Leadership signals:',
-      'Workforce or hiring signals:',
-      'Engagement/activity signals:',
-      'Lead Intelligence Summary:',
-      'Recommended First Call Angle:',
       'What needs correction:',
-      'Missing data:',
       'Confidence:'
     ].join('\n');
     const content=await callOpenAIWebResearch({system,user,maxTokens:5000,temperature:0.15});
@@ -5317,18 +7984,93 @@ app.put('/api/ghl/social/posts/:id',async(req,res)=>{
 function readTasks(){ return readJson(TASKS_FILE,[]); }
 function writeTasks(tasks){ writeJson(TASKS_FILE,tasks); }
 function rowToTask(row){
-  return {id:row.id,title:row.title,contactName:row.contact_name||'',dueDate:row.due_date?row.due_date.toISOString():null,notes:row.notes||'',details:row.details||[],completed:!!row.completed,createdAt:row.created_at?row.created_at.toISOString():new Date().toISOString()};
+  return {id:row.id,title:row.title,contactName:row.contact_name||'',dueDate:row.due_date?row.due_date.toISOString():null,notes:row.notes||'',details:row.details||[],completed:!!row.completed,completedAt:row.completed_at?row.completed_at.toISOString():null,completedBy:row.completed_by||'',createdAt:row.created_at?row.created_at.toISOString():new Date().toISOString()};
+}
+function rowToTaskCalendarBlock(row){
+  return {
+    calendarBlockId:row.id,
+    scheduledStart:row.scheduled_start?row.scheduled_start.toISOString():null,
+    scheduledEnd:row.scheduled_end?row.scheduled_end.toISOString():null,
+    calendarProvider:row.calendar_provider||'',
+    calendarId:row.calendar_id||'',
+    calendarEventId:row.calendar_event_id||'',
+    estimatedDurationMinutes:Number(row.estimated_duration_minutes||45),
+    schedulingStatus:row.scheduling_status||'unscheduled',
+    sourceType:row.source_type||'',
+    sourceId:row.source_id||'',
+    relatedTranscriptId:row.related_transcript_id||'',
+    relatedEmailId:row.related_email_id||'',
+    relatedContactId:row.related_contact_id||'',
+    schedulingSettings:row.settings_json||{}
+  };
+}
+async function mergeTaskCalendarBlocks(tasks){
+  tasks=Array.isArray(tasks)?tasks:[];
+  if(!tasks.length||DEMO_MODE)return tasks;
+  if(pgPool){
+    const ids=tasks.map(t=>t.id).filter(Boolean);
+    if(!ids.length)return tasks;
+    const r=await dbQuery('select * from val_task_calendar_blocks where tenant_id=$1 and user_id=$2 and task_id = any($3)',[tenantId(),VAL_USER_ID,ids]);
+    const byTask=new Map((r.rows||[]).map(row=>[row.task_id,rowToTaskCalendarBlock(row)]));
+    return tasks.map(t=>byTask.has(t.id)?{...t,...byTask.get(t.id)}:t);
+  }
+  return tasks;
+}
+async function getTaskCalendarBlock(taskId){
+  if(!taskId)return null;
+  if(pgPool){
+    const r=await dbQuery('select * from val_task_calendar_blocks where tenant_id=$1 and user_id=$2 and task_id=$3 limit 1',[tenantId(),VAL_USER_ID,taskId]);
+    return r.rows[0]?{taskId:r.rows[0].task_id,...rowToTaskCalendarBlock(r.rows[0])}:null;
+  }
+  const task=readTasks().find(t=>t.id===taskId);
+  return task?.calendarEventId?task:null;
+}
+async function saveTaskCalendarBlock(taskId,block){
+  if(!taskId)return null;
+  const clean={
+    id:block.calendarBlockId||uuid('task-block'),
+    taskId,
+    scheduledStart:block.scheduledStart||block.scheduled_start||null,
+    scheduledEnd:block.scheduledEnd||block.scheduled_end||null,
+    calendarProvider:block.calendarProvider||block.calendar_provider||'',
+    calendarId:block.calendarId||block.calendar_id||'',
+    calendarEventId:block.calendarEventId||block.calendar_event_id||'',
+    estimatedDurationMinutes:Number(block.estimatedDurationMinutes||block.estimated_duration_minutes||45),
+    sourceType:block.sourceType||block.source_type||'',
+    sourceId:block.sourceId||block.source_id||'',
+    relatedTranscriptId:block.relatedTranscriptId||block.related_transcript_id||'',
+    relatedEmailId:block.relatedEmailId||block.related_email_id||'',
+    relatedContactId:block.relatedContactId||block.related_contact_id||'',
+    schedulingStatus:block.schedulingStatus||block.scheduling_status||'scheduled',
+    settings:block.schedulingSettings||block.settings_json||{}
+  };
+  if(pgPool){
+    await dbQuery(`
+      insert into val_task_calendar_blocks (id,task_id,user_id,tenant_id,scheduled_start,scheduled_end,calendar_provider,calendar_id,calendar_event_id,estimated_duration_minutes,source_type,source_id,related_transcript_id,related_email_id,related_contact_id,scheduling_status,settings_json,updated_at)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,now())
+      on conflict (tenant_id,user_id,task_id) do update set scheduled_start=excluded.scheduled_start,scheduled_end=excluded.scheduled_end,calendar_provider=excluded.calendar_provider,calendar_id=excluded.calendar_id,calendar_event_id=excluded.calendar_event_id,estimated_duration_minutes=excluded.estimated_duration_minutes,source_type=excluded.source_type,source_id=excluded.source_id,related_transcript_id=excluded.related_transcript_id,related_email_id=excluded.related_email_id,related_contact_id=excluded.related_contact_id,scheduling_status=excluded.scheduling_status,settings_json=excluded.settings_json,updated_at=now()
+    `,[clean.id,taskId,VAL_USER_ID,tenantId(),clean.scheduledStart,clean.scheduledEnd,clean.calendarProvider,clean.calendarId,clean.calendarEventId,clean.estimatedDurationMinutes,clean.sourceType,clean.sourceId,clean.relatedTranscriptId,clean.relatedEmailId,clean.relatedContactId,clean.schedulingStatus,JSON.stringify(clean.settings)]);
+  }else{
+    const tasks=readTasks();
+    const idx=tasks.findIndex(t=>t.id===taskId);
+    if(idx>=0){tasks[idx]={...tasks[idx],...clean};writeTasks(tasks);}
+  }
+  return clean;
 }
 async function loadTasks(){
   if(DEMO_MODE) return cloneDemo(requestContext.getStore()?.demoState?.tasks || []);
   await valDbReady;
   if(pgPool){
     const r=await dbQuery('select * from val_tasks where user_id=$1 order by completed asc, due_date asc nulls last, created_at desc',[VAL_USER_ID]);
-    return r.rows.map(rowToTask);
+    return mergeTaskCalendarBlocks(r.rows.map(rowToTask));
   }
   return readTasks();
 }
 async function saveTask(task){
+  task={...task};
+  task.title=String(task.title||'Untitled task').trim()||'Untitled task';
+  task.contactName=task.contactName||'';
+  if(!task.dueDate&&!task.completed) task.dueDate=new Date(Date.now()+24*60*60*1000).toISOString();
   if(DEMO_MODE){
     const state=requestContext.getStore()?.demoState;
     if(state){
@@ -5339,8 +8081,6 @@ async function saveTask(task){
     return;
   }
   await valDbReady;
-  task.title=String(task.title||'Untitled task').trim()||'Untitled task';
-  task.contactName=task.contactName||'';
   if(pgPool){
     if(!task.completed){
       const dupe=await dbQuery('select id,details from val_tasks where user_id=$1 and completed=false and lower(title)=lower($2) and lower(coalesce(contact_name,\'\'))=lower($3) limit 1',[VAL_USER_ID,task.title,task.contactName]);
@@ -5351,10 +8091,10 @@ async function saveTask(task){
       }
     }
     await dbQuery(`
-      insert into val_tasks (id,user_id,title,contact_name,due_date,notes,details,completed,created_at,updated_at)
-      values ($1,$2,$3,$4,$5,$6,$7,$8,coalesce($9::timestamptz,now()),now())
-      on conflict (id) do update set title=excluded.title, contact_name=excluded.contact_name, due_date=excluded.due_date, notes=excluded.notes, details=excluded.details, completed=excluded.completed, updated_at=now()
-    `,[task.id,VAL_USER_ID,task.title||'Untitled task',task.contactName||'',task.dueDate||null,task.notes||'',JSON.stringify(task.details||[]),!!task.completed,task.createdAt||null]);
+      insert into val_tasks (id,user_id,title,contact_name,due_date,notes,details,completed,completed_at,completed_by,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,coalesce($11::timestamptz,now()),now())
+      on conflict (id) do update set title=excluded.title, contact_name=excluded.contact_name, due_date=excluded.due_date, notes=excluded.notes, details=excluded.details, completed=excluded.completed, completed_at=excluded.completed_at, completed_by=excluded.completed_by, updated_at=now()
+    `,[task.id,VAL_USER_ID,task.title||'Untitled task',task.contactName||'',task.dueDate||null,task.notes||'',JSON.stringify(task.details||[]),!!task.completed,task.completedAt||null,task.completedBy||'',task.createdAt||null]);
     return;
   }
   const tasks=readTasks();
@@ -5479,10 +8219,258 @@ async function persistAutoTasksFromValResponse({content,userQuery='',action='cha
   }
   return created;
 }
+async function findTaskById(taskId){
+  return (await loadTasks()).find(t=>String(t.id)===String(taskId));
+}
+async function busyEventsForTaskWindow(start,end){
+  const calendars=await Promise.all([
+    fetchGoogleCalendarEvents(start,end,150).catch(()=>[]),
+    fetchOutlookCalendarEvents(start,end,150).catch(()=>[]),
+    fetchValCalendarEvents(start,end).catch(()=>[])
+  ]);
+  return calendars.flat().filter(e=>!/^free$/i.test(String(e.transparency||e.showAs||''))).map(e=>({
+    start:parseTaskDate(e.startTime||e.start||e.date),
+    end:parseTaskDate(e.endTime||e.end||e.date)
+  })).filter(e=>e.start&&e.end);
+}
+async function suggestTaskSlots(task,opts={}){
+  const settings={...defaultTaskCalendarSettings(),...(opts.settings||{})};
+  const duration=Number(opts.durationMinutes||task.estimatedDurationMinutes||settings.default_duration_minutes||45);
+  const now=new Date();
+  let searchStart=parseTaskDate(opts.searchStart)||new Date(now.getTime()+30*60000);
+  let searchEnd=parseTaskDate(opts.searchEnd)||parseTaskDate(task.dueDate)||new Date(now.getTime()+14*24*60*60*1000);
+  if(searchEnd<searchStart) searchEnd=new Date(searchStart.getTime()+7*24*60*60*1000);
+  const busy=await busyEventsForTaskWindow(searchStart,searchEnd);
+  const slots=[];
+  const cursor=new Date(searchStart);
+  cursor.setMinutes(cursor.getMinutes()<30?30:60,0,0);
+  while(cursor<searchEnd&&slots.length<6){
+    const day=cursor.getDay();
+    const dayStart=new Date(cursor);dayStart.setHours(settings.workday_start_hour,0,0,0);
+    const dayEnd=new Date(cursor);dayEnd.setHours(settings.workday_end_hour,0,0,0);
+    if(settings.avoid_weekends&&(day===0||day===6)){
+      cursor.setDate(cursor.getDate()+1);cursor.setHours(settings.workday_start_hour,0,0,0);continue;
+    }
+    if(cursor<dayStart){cursor.setTime(dayStart.getTime());}
+    const candidateEnd=addMinutes(cursor,duration);
+    if(candidateEnd<=dayEnd&&!busy.some(b=>intervalsOverlap(cursor,candidateEnd,b.start,b.end))){
+      slots.push({start:cursor.toISOString(),end:candidateEnd.toISOString(),durationMinutes:duration,label:cursor.toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:CLIENT_CONFIG.timezone})});
+      cursor.setTime(candidateEnd.getTime()+15*60000);
+    }else{
+      cursor.setMinutes(cursor.getMinutes()+30,0,0);
+    }
+    if(cursor>=dayEnd){cursor.setDate(cursor.getDate()+1);cursor.setHours(settings.workday_start_hour,0,0,0);}
+  }
+  return slots;
+}
+async function calendarizeTask(taskId,opts={}){
+  const task=await findTaskById(taskId);
+  if(!task) throw new Error('Task not found');
+  const existing=await getTaskCalendarBlock(taskId);
+  const settings={...defaultTaskCalendarSettings(),...(existing?.schedulingSettings||{}),...(opts.settings||{})};
+  const duration=Number(opts.durationMinutes||existing?.estimatedDurationMinutes||task.estimatedDurationMinutes||settings.default_duration_minutes||45);
+  let start=parseTaskDate(opts.scheduledStart||opts.start||task.scheduledStart);
+  let end=parseTaskDate(opts.scheduledEnd||opts.end||task.scheduledEnd);
+  if(start&&!end) end=addMinutes(start,duration);
+  if(!start){
+    const suggestedSlots=await suggestTaskSlots(task,{durationMinutes:duration,settings});
+    return {ok:true,needsApproval:true,task,suggestedSlots,message:'Choose a protected work block for this task.'};
+  }
+  if(!end||end<=start) end=addMinutes(start,duration);
+  const provider=pickTaskProvider(opts.provider||existing?.calendarProvider||settings.default_provider);
+  const providerApi=calendarProviders[provider];
+  if(!providerApi) throw new Error('Calendar provider not supported');
+  let created;
+  if(existing?.calendarEventId){
+    created=await providerApi.updateTaskBlock(task,{eventId:existing.calendarEventId,calendarId:existing.calendarId||opts.calendarId||'primary',start,end,focus:!!opts.focus});
+  }else{
+    created=await providerApi.createTaskBlock(task,{start,end,calendarId:opts.calendarId||existing?.calendarId||'primary',durationMinutes:duration,focus:!!opts.focus});
+  }
+  const block=await saveTaskCalendarBlock(taskId,{
+    calendarBlockId:existing?.calendarBlockId,
+    scheduledStart:start.toISOString(),
+    scheduledEnd:end.toISOString(),
+    calendarProvider:created.provider||provider,
+    calendarId:created.calendarId||opts.calendarId||existing?.calendarId||'primary',
+    calendarEventId:created.eventId,
+    estimatedDurationMinutes:duration,
+    sourceType:opts.sourceType||task.source||existing?.sourceType||'manual',
+    sourceId:opts.sourceId||task.sourceId||existing?.sourceId||'',
+    relatedTranscriptId:opts.relatedTranscriptId||task.transcriptId||task.sourceTranscriptId||existing?.relatedTranscriptId||'',
+    relatedEmailId:opts.relatedEmailId||task.emailId||existing?.relatedEmailId||'',
+    relatedContactId:opts.relatedContactId||task.contactId||existing?.relatedContactId||'',
+    schedulingStatus:task.completed?'completed':'scheduled',
+    schedulingSettings:settings
+  });
+  return {ok:true,task:{...task,...block},calendarEvent:created,updated:!!existing?.calendarEventId};
+}
+async function completeCalendarizedTask(taskId,taskPatch={}){
+  const task=await findTaskById(taskId);
+  if(!task) throw new Error('Task not found');
+  const completed={...task,...taskPatch,completed:true,completedAt:taskPatch.completedAt||task.completedAt||new Date().toISOString(),completedBy:taskPatch.completedBy||task.completedBy||'you'};
+  await saveTask(completed);
+  const block=await getTaskCalendarBlock(taskId);
+  if(block?.calendarEventId&&block.scheduledStart&&block.scheduledEnd){
+    const settings={...defaultTaskCalendarSettings(),...(block.schedulingSettings||{})};
+    if(settings.completion_behavior!=='delete_event'){
+      try{
+        const api=calendarProviders[block.calendarProvider]||calendarProviders[pickTaskProvider(block.calendarProvider)];
+        if(api?.updateTaskBlock){
+          await api.updateTaskBlock(completed,{eventId:block.calendarEventId,calendarId:block.calendarId||'primary',start:new Date(block.scheduledStart),end:new Date(block.scheduledEnd),completed:true});
+        }
+        await saveTaskCalendarBlock(taskId,{...block,schedulingStatus:'completed'});
+      }catch(e){
+        await saveTaskCalendarBlock(taskId,{...block,schedulingStatus:'completion_sync_failed',schedulingSettings:{...settings,lastCompletionSyncError:e.message}});
+      }
+    }else{
+      await saveTaskCalendarBlock(taskId,{...block,schedulingStatus:'completed'});
+    }
+  }
+  return {...completed,...(await getTaskCalendarBlock(taskId)||{})};
+}
+async function openLoopsSummary(){
+  const tasks=await loadTasks();
+  const now=new Date();
+  const open=tasks.filter(t=>!t.completed&&t.status!=='completed');
+  const unscheduled=open.filter(t=>!t.calendarEventId&&!t.scheduledStart);
+  const overdue=open.filter(t=>t.dueDate&&new Date(t.dueDate)<now);
+  const todayEnd=new Date();todayEnd.setHours(23,59,59,999);
+  const scheduledToday=open.filter(t=>t.scheduledStart&&new Date(t.scheduledStart)>=now&&new Date(t.scheduledStart)<=todayEnd);
+  return {openCount:open.length,unscheduledCount:unscheduled.length,overdueCount:overdue.length,scheduledTodayCount:scheduledToday.length,unscheduled:unscheduled.slice(0,12),overdue:overdue.slice(0,8),scheduledToday:scheduledToday.slice(0,8)};
+}
 app.get('/api/val/tasks',async(req,res)=>{try{res.json(await loadTasks());}catch(e){res.status(500).json({error:e.message});}});
-app.post('/api/val/tasks',async(req,res)=>{try{const task=req.body;if(!task||!task.id)return res.status(400).json({error:'Missing task id'});await saveTask(task);res.json({ok:true,task});}catch(e){res.status(500).json({error:e.message});}});
-app.put('/api/val/tasks',async(req,res)=>{try{if(!Array.isArray(req.body))return res.status(400).json({error:'Expected array'});await replaceTasks(req.body);res.json({ok:true,count:req.body.length});}catch(e){res.status(500).json({error:e.message});}});
-app.delete('/api/val/tasks/:id',async(req,res)=>{try{await deleteTask(req.params.id);res.json({ok:true});}catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/val/tasks',async(req,res)=>{try{const task=req.body;if(!task||!task.id)return res.status(400).json({error:'Missing task id'});await saveTask(task);await auditLog({req,action:'task_created',resourceType:'task',resourceId:task.id,metadata:{title:task.title,source:task.source||''},success:true}).catch(()=>{});res.json({ok:true,task});}catch(e){res.status(500).json({error:e.message});}});
+app.put('/api/val/tasks',async(req,res)=>{try{if(!Array.isArray(req.body))return res.status(400).json({error:'Expected array'});await replaceTasks(req.body);await auditLog({req,action:'task_bulk_updated',resourceType:'task',metadata:{count:req.body.length},success:true}).catch(()=>{});res.json({ok:true,count:req.body.length});}catch(e){res.status(500).json({error:e.message});}});
+app.delete('/api/val/tasks/:id',async(req,res)=>{try{await deleteTask(req.params.id);await auditLog({req,action:'task_deleted',resourceType:'task',resourceId:req.params.id,success:true}).catch(()=>{});res.json({ok:true});}catch(e){res.status(500).json({error:e.message});}});
+app.get('/api/val/tasks/open-loops',async(req,res)=>{try{res.json({ok:true,...await openLoopsSummary()});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.post('/api/val/tasks/:id/suggest-time',async(req,res)=>{try{const task=await findTaskById(req.params.id);if(!task)return res.status(404).json({ok:false,error:'Task not found'});res.json({ok:true,task,suggestedSlots:await suggestTaskSlots(task,req.body||{})});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.post('/api/val/tasks/:id/calendarize',async(req,res)=>{try{const result=await calendarizeTask(req.params.id,req.body||{});await auditLog({req,action:result.updated?'calendar_event_updated':'calendar_event_created',resourceType:'task_calendar_block',resourceId:result.task?.calendarEventId||req.params.id,metadata:{taskId:req.params.id,provider:result.task?.calendarProvider||''},success:result.ok!==false}).catch(()=>{});res.json(result);}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.post('/api/val/tasks/:id/complete',async(req,res)=>{try{const task=await completeCalendarizedTask(req.params.id,req.body||{});await auditLog({req,action:'task_completed',resourceType:'task',resourceId:req.params.id,metadata:{calendarEventId:task.calendarEventId||''},success:true}).catch(()=>{});res.json({ok:true,task});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+
+const MEETING_RECAP_TEMPLATE_KEY='meeting_recap';
+const DEFAULT_MEETING_RECAP_TEMPLATE={
+  templateKey:MEETING_RECAP_TEMPLATE_KEY,
+  name:'Meeting Recap Template',
+  subjectTemplate:'Recap: {{meeting_title}}',
+  htmlTemplate:[
+    '<p>Hi {{recipient_first_name}},</p>',
+    '<p>Thank you for the conversation. Here is the recap from <strong>{{meeting_title}}</strong>.</p>',
+    '<h3>Executive summary</h3>',
+    '<p>{{executive_summary}}</p>',
+    '<h3>Key decisions</h3>',
+    '<ul>{{key_decisions_html}}</ul>',
+    '<h3>Open questions</h3>',
+    '<ul>{{open_questions_html}}</ul>',
+    '<h3>Next steps</h3>',
+    '<ul>{{tasks_html}}</ul>',
+    '<p>Best,</p>'
+  ].join('\n'),
+  textTemplate:[
+    'Hi {{recipient_first_name}},',
+    '',
+    'Thank you for the conversation. Here is the recap from {{meeting_title}}.',
+    '',
+    'Executive summary:',
+    '{{executive_summary}}',
+    '',
+    'Key decisions:',
+    '{{key_decisions_text}}',
+    '',
+    'Open questions:',
+    '{{open_questions_text}}',
+    '',
+    'Next steps:',
+    '{{tasks_text}}',
+    '',
+    'Best,'
+  ].join('\n')
+};
+function templatePgRow(row){
+  return {id:row.id,userId:row.user_id,tenantId:row.tenant_id,templateKey:row.template_key,name:row.name,subjectTemplate:row.subject_template||'',htmlTemplate:row.html_template||'',textTemplate:row.text_template||'',isActive:row.is_active!==false,createdAt:row.created_at?row.created_at.toISOString():new Date().toISOString(),updatedAt:row.updated_at?row.updated_at.toISOString():new Date().toISOString()};
+}
+function systemTemplate(key){
+  if(key===MEETING_RECAP_TEMPLATE_KEY)return {...DEFAULT_MEETING_RECAP_TEMPLATE,id:'system_'+key,userId:currentUserId(),tenantId:tenantId(),isActive:true,systemDefault:true,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+  return null;
+}
+async function getActiveTemplate(key){
+  await valDbReady;
+  if(pgPool){
+    const r=await dbQuery('select * from val_templates where tenant_id=$1 and user_id=$2 and template_key=$3 and is_active=true order by updated_at desc limit 1',[tenantId(),currentUserId(),key]);
+    return r.rows[0]?templatePgRow(r.rows[0]):systemTemplate(key);
+  }
+  const row=(valStore().templates||[]).filter(t=>t.tenantId===tenantId()&&t.userId===currentUserId()&&t.templateKey===key&&t.isActive!==false).sort((a,b)=>new Date(b.updatedAt||0)-new Date(a.updatedAt||0))[0];
+  return row||systemTemplate(key);
+}
+async function saveTemplate(key,payload={}){
+  const base=systemTemplate(key);
+  if(!base)throw new Error('Unknown template key');
+  const template={id:payload.id||uuid('tmpl'),userId:currentUserId(),tenantId:tenantId(),templateKey:key,name:payload.name||base.name,subjectTemplate:String(payload.subjectTemplate??payload.subject_template??base.subjectTemplate),htmlTemplate:String(payload.htmlTemplate??payload.html_template??base.htmlTemplate),textTemplate:String(payload.textTemplate??payload.text_template??base.textTemplate),isActive:payload.isActive!==false,createdAt:payload.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+  if(pgPool){
+    const r=await dbQuery(`
+      insert into val_templates (id,user_id,tenant_id,template_key,name,subject_template,html_template,text_template,is_active,created_at,updated_at)
+      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,coalesce($10::timestamptz,now()),now())
+      on conflict (tenant_id,user_id,template_key) do update set name=excluded.name,subject_template=excluded.subject_template,html_template=excluded.html_template,text_template=excluded.text_template,is_active=excluded.is_active,updated_at=now()
+      returning *
+    `,[template.id,template.userId,template.tenantId,template.templateKey,template.name,template.subjectTemplate,template.htmlTemplate,template.textTemplate,template.isActive,template.createdAt]);
+    return templatePgRow(r.rows[0]);
+  }
+  const store=valStore();store.templates=store.templates||[];
+  const idx=store.templates.findIndex(t=>t.tenantId===template.tenantId&&t.userId===template.userId&&t.templateKey===template.templateKey);
+  if(idx>=0)store.templates[idx]={...store.templates[idx],...template}; else store.templates.unshift(template);
+  saveValStore(store);return template;
+}
+function renderTemplateString(source,vars){
+  return String(source||'').replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g,(_,key)=>String(vars[key]??''));
+}
+function escapeHtml(value){
+  return String(value==null?'':value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function htmlList(items){
+  const list=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:x?.title||x?.text||x?.taskTitle||'').trim()).filter(Boolean);
+  return list.length?list.map(x=>`<li>${escapeHtml(x)}</li>`).join('\n'):'<li>None captured.</li>';
+}
+function textList(items){
+  const list=(Array.isArray(items)?items:[]).map(x=>String(typeof x==='string'?x:x?.title||x?.text||x?.taskTitle||'').trim()).filter(Boolean);
+  return list.length?list.map(x=>`- ${x}`).join('\n'):'- None captured.';
+}
+function firstName(name){return String(name||'there').trim().split(/\s+/)[0]||'there';}
+async function renderMeetingRecapTemplate({transcriptId,title,summary,participants,tasks,sourceQuote}){
+  const template=await getActiveTemplate(MEETING_RECAP_TEMPLATE_KEY);
+  const recipient=(participants||[]).find(p=>!isOwnerRelationship({name:p.matchedContactName||p.speakerNameRaw,email:p.matchedEmail||''}))||participants?.[0]||{};
+  const vars={
+    meeting_title:title||'Meeting',
+    transcript_id:transcriptId||'',
+    recipient_name:recipient.matchedContactName||recipient.speakerNameRaw||'there',
+    recipient_first_name:firstName(recipient.matchedContactName||recipient.speakerNameRaw),
+    executive_summary:summary?.executiveSummary||summary?.summary||'Summary pending.',
+    client_summary:summary?.clientSummary||'',
+    internal_notes:summary?.internalNotes||'',
+    key_decisions_html:htmlList(summary?.keyDecisions),
+    key_decisions_text:textList(summary?.keyDecisions),
+    open_questions_html:htmlList(summary?.openQuestions),
+    open_questions_text:textList(summary?.openQuestions),
+    relationship_updates_html:htmlList(summary?.relationshipUpdates),
+    relationship_updates_text:textList(summary?.relationshipUpdates),
+    tasks_html:htmlList(tasks),
+    tasks_text:textList(tasks),
+    source_quote:sourceQuote||''
+  };
+  return {template,subject:renderTemplateString(template.subjectTemplate,vars).trim()||`Recap: ${title||'Meeting'}`,htmlBody:renderTemplateString(template.htmlTemplate,vars),textBody:renderTemplateString(template.textTemplate,vars),vars};
+}
+async function saveMeetingRecapDraft({transcriptId,title,summary,participants,tasks,transcriptText}){
+  const rendered=await renderMeetingRecapTemplate({transcriptId,title,summary,participants,tasks,sourceQuote:transcriptSupportingQuote(transcriptText,'')});
+  const existing=(await listDrafts()).find(d=>d.draftType==='meeting_recap'&&d.sourceContext?.transcriptId===transcriptId);
+  const recipients=(participants||[]).map(p=>p.matchedEmail||p.email||p.matchedContactName||p.speakerNameRaw||'').filter(Boolean);
+  return saveInternalDraft({id:existing?.id,draftType:'meeting_recap',provider:'internal',subject:rendered.subject,body:rendered.textBody,status:'draft',sourceContext:{...(existing?.sourceContext||{}),source:'transcript_intelligence',transcriptId,transcriptTitle:title,meetingTitle:title,recipients,templateKey:MEETING_RECAP_TEMPLATE_KEY,templateId:rendered.template.id,htmlBody:rendered.htmlBody,plainTextBody:rendered.textBody}});
+}
+app.get('/api/val/templates/:templateKey',async(req,res)=>{
+  try{const template=await getActiveTemplate(req.params.templateKey);if(!template)return res.status(404).json({ok:false,error:'Template not found'});res.json({ok:true,template});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.put('/api/val/templates/:templateKey',async(req,res)=>{
+  try{res.json({ok:true,template:await saveTemplate(req.params.templateKey,req.body||{})});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 
 function rowToDraft(row){
   return {id:row.id,userId:row.user_id,tenantId:row.tenant_id,draftType:row.draft_type,contactId:row.contact_id||'',provider:row.provider,subject:row.subject||'',body:row.body||'',status:row.status,sourceContext:row.source_context_json||{},createdAt:row.created_at?row.created_at.toISOString():new Date().toISOString(),updatedAt:row.updated_at?row.updated_at.toISOString():new Date().toISOString()};
@@ -5506,13 +8494,16 @@ async function saveInternalDraft(payload){
       on conflict (id) do update set draft_type=excluded.draft_type,contact_id=excluded.contact_id,provider=excluded.provider,subject=excluded.subject,body=excluded.body,status=excluded.status,source_context_json=excluded.source_context_json,updated_at=now()
       returning *
     `,[draft.id,draft.userId,draft.tenantId,draft.draftType,draft.contactId,draft.provider,draft.subject,draft.body,draft.status,JSON.stringify(draft.sourceContext)]);
-    return rowToDraft(r.rows[0]);
+    const saved=rowToDraft(r.rows[0]);
+    await auditLog({tenantId:draft.tenantId,userId:draft.userId,action:'draft_created',resourceType:'draft',resourceId:saved.id,metadata:{draftType:saved.draftType,provider:saved.provider,status:saved.status,source:saved.sourceContext?.source||''},success:true}).catch(()=>{});
+    return saved;
   }
   const store=valStore();store.drafts=store.drafts||[];
   const idx=store.drafts.findIndex(d=>d.id===draft.id);
   const record={...draft,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
   if(idx>=0)store.drafts[idx]={...store.drafts[idx],...record}; else store.drafts.unshift(record);
   saveValStore(store);
+  await auditLog({tenantId:draft.tenantId,userId:draft.userId,action:'draft_created',resourceType:'draft',resourceId:record.id,metadata:{draftType:record.draftType,provider:record.provider,status:record.status,source:record.sourceContext?.source||''},success:true}).catch(()=>{});
   return record;
 }
 async function listDrafts(status=''){
@@ -5531,7 +8522,13 @@ async function listDrafts(status=''){
   }
   return (valStore().drafts||[]).filter(d=>d.userId===currentUserId()&&(!status||d.status===status)).slice(0,100);
 }
-app.get('/api/val/drafts',async(req,res)=>{try{res.json({ok:true,drafts:await listDrafts(req.query.status||'')});}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.get('/api/val/drafts',async(req,res)=>{
+  try{
+    let drafts=await listDrafts(req.query.status||'');
+    if(req.query.transcriptId)drafts=drafts.filter(d=>String(d.sourceContext?.transcriptId||'')===String(req.query.transcriptId));
+    res.json({ok:true,drafts});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 app.post('/api/val/drafts',async(req,res)=>{try{res.json({ok:true,draft:await saveInternalDraft(req.body||{})});}catch(e){res.status(500).json({ok:false,error:e.message});}});
 app.patch('/api/val/drafts/:id',async(req,res)=>{
   try{
@@ -5589,8 +8586,23 @@ async function googleApiJson(url,opts={}){
   if(!r.ok||d.error) throw new Error(d.error?.message||d.error_description||`Google API failed (${r.status})`);
   return d;
 }
+function googleApiIsDocsDisabled(error){
+  return /Google Docs API has not been used|docs\.googleapis\.com|api\/docs\.googleapis\.com|Docs API.*disabled|it is disabled/i.test(String(error&&error.message||error||''));
+}
+function googleDocStructuralElements(doc){
+  const out=[];
+  if(Array.isArray(doc?.body?.content)) out.push(...doc.body.content);
+  const walkTabs=(tabs=[])=>{
+    for(const tab of tabs||[]){
+      if(Array.isArray(tab?.documentTab?.body?.content)) out.push(...tab.documentTab.body.content);
+      if(Array.isArray(tab?.childTabs)) walkTabs(tab.childTabs);
+    }
+  };
+  walkTabs(doc?.tabs||[]);
+  return out;
+}
 function googleDocEndIndex(doc){
-  const content=doc?.body?.content||[];
+  const content=googleDocStructuralElements(doc);
   const last=content[content.length-1]||{};
   return Math.max(1,Number(last.endIndex||1)-1);
 }
@@ -5630,13 +8642,58 @@ async function updateGoogleDoc({documentId,content,mode}){
   const token=await googleDocsToken();
   const id=googleDocIdFromInput(documentId);
   if(!id) throw new Error('Paste a Google Docs URL or document ID.');
-  const doc=await googleApiJson(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}`,{headers:{Authorization:`Bearer ${token}`}});
+  const doc=await googleApiJson(googleDocsGetUrl(id),{headers:{Authorization:`Bearer ${token}`}});
   await googleApiJson(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}:batchUpdate`,{
     method:'POST',
     headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
     body:JSON.stringify({requests:googleDocInsertRequests(doc,content,mode||'append')})
   });
   return {id,title:doc.title||'Google Doc',url:googleDocUrl(id),mode:mode||'append'};
+}
+async function formatGoogleDocForManuscript(documentId){
+  const token=await googleDocsToken();
+  const id=googleDocIdFromInput(documentId);
+  if(!id) throw new Error('Missing Google Doc ID.');
+  const doc=await googleApiJson(googleDocsGetUrl(id),{headers:{Authorization:`Bearer ${token}`}});
+  const endIndex=Math.max(2,googleDocEndIndex(doc));
+  const zeroPt={magnitude:0,unit:'PT'};
+  const margin={magnitude:72,unit:'PT'};
+  const requests=[
+    {
+      updateDocumentStyle:{
+        documentStyle:{marginTop:margin,marginBottom:margin,marginLeft:margin,marginRight:margin},
+        fields:'marginTop,marginBottom,marginLeft,marginRight'
+      }
+    },
+    {
+      updateParagraphStyle:{
+        range:{startIndex:1,endIndex},
+        paragraphStyle:{
+          alignment:'START',
+          indentStart:zeroPt,
+          indentEnd:zeroPt,
+          indentFirstLine:zeroPt,
+          spaceAbove:zeroPt,
+          spaceBelow:{magnitude:10,unit:'PT'},
+          lineSpacing:115
+        },
+        fields:'alignment,indentStart,indentEnd,indentFirstLine,spaceAbove,spaceBelow,lineSpacing'
+      }
+    },
+    {
+      updateTextStyle:{
+        range:{startIndex:1,endIndex},
+        textStyle:{weightedFontFamily:{fontFamily:'Arial'},fontSize:{magnitude:11,unit:'PT'}},
+        fields:'weightedFontFamily,fontSize'
+      }
+    }
+  ];
+  await googleApiJson(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}:batchUpdate`,{
+    method:'POST',
+    headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},
+    body:JSON.stringify({requests})
+  });
+  return {id,url:googleDocUrl(id),formatted:true,endIndex};
 }
 function googleDriveQueryEscape(value){
   return String(value||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
@@ -5656,6 +8713,77 @@ function googleDocTextFromStructuralElements(elements=[]){
     if(el.tableOfContents) out+=googleDocTextFromStructuralElements(el.tableOfContents.content||[]);
   }
   return out;
+}
+function decodeBasicHtml(value){
+  return String(value||'')
+    .replace(/&nbsp;/g,' ')
+    .replace(/&amp;/g,'&')
+    .replace(/&lt;/g,'<')
+    .replace(/&gt;/g,'>')
+    .replace(/&quot;/g,'"')
+    .replace(/&#39;/g,"'")
+    .replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n)||32));
+}
+function stripHtml(value){
+  return decodeBasicHtml(String(value||'')
+    .replace(/<br\s*\/?>/gi,'\n')
+    .replace(/<style[\s\S]*?<\/style>/gi,'')
+    .replace(/<script[\s\S]*?<\/script>/gi,'')
+    .replace(/<[^>]+>/g,' '))
+    .replace(/[ \t]+/g,' ')
+    .replace(/\n\s+/g,'\n')
+    .trim();
+}
+function googleDocFromExportedHtml(html,title='Google Doc'){
+  const body=String(html||'');
+  const content=[];
+  let cursor=1;
+  const titleMatch=body.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const docTitle=title||stripHtml(titleMatch&&titleMatch[1]||'Google Doc');
+  const blockRe=/<(h1|h2|h3|p|li|div)[^>]*>([\s\S]*?)<\/\1>/gi;
+  let m;
+  while((m=blockRe.exec(body))){
+    const tag=m[1].toLowerCase();
+    const text=stripHtml(m[2]).replace(/\s+/g,' ').trim();
+    if(!text) continue;
+    const namedStyleType=tag==='h1'?'HEADING_1':(tag==='h2'?'HEADING_2':(tag==='h3'?'HEADING_3':'NORMAL_TEXT'));
+    const contentText=text+'\n';
+    const startIndex=cursor,endIndex=cursor+contentText.length;
+    content.push({startIndex,endIndex,paragraph:{paragraphStyle:{namedStyleType},elements:[{startIndex,endIndex,textRun:{content:contentText}}]}});
+    cursor=endIndex;
+  }
+  if(!content.length){
+    const text=stripHtml(body);
+    const contentText=text+'\n';
+    content.push({startIndex:1,endIndex:1+contentText.length,paragraph:{paragraphStyle:{namedStyleType:'NORMAL_TEXT'},elements:[{startIndex:1,endIndex:1+contentText.length,textRun:{content:contentText}}]}});
+  }
+  return {title:docTitle,body:{content},exportedViaDrive:true};
+}
+async function googleDriveExportText(documentId,mimeType='text/html'){
+  const token=await googleDocsToken();
+  const id=googleDocIdFromInput(documentId);
+  if(!id) throw new Error('Missing Google Doc ID.');
+  const url=`https://www.googleapis.com/drive/v3/files/${encodeURIComponent(id)}/export?`+new URLSearchParams({mimeType}).toString();
+  const r=await fetch(url,{headers:{Authorization:`Bearer ${token}`}});
+  const text=await r.text();
+  if(!r.ok){
+    let message=text;
+    try{message=JSON.parse(text).error?.message||message;}catch(e){}
+    throw new Error(message||`Google Drive export failed (${r.status})`);
+  }
+  return text;
+}
+function googleDocsGetUrl(documentId){
+  const id=googleDocIdFromInput(documentId);
+  return `https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}?`+new URLSearchParams({includeTabsContent:'true'}).toString();
+}
+function googleDocExtractedText(doc){
+  return googleDocTextFromStructuralElements(googleDocStructuralElements(doc)).trim();
+}
+async function googleDocWithExportFallback(documentId,doc,title='Google Doc'){
+  if(googleDocExtractedText(doc)) return doc;
+  const html=await googleDriveExportText(documentId,'text/html');
+  return googleDocFromExportedHtml(html,title||doc?.title||'Google Doc');
 }
 function likelyGoogleDocSearches(query){
   const raw=String(query||'').trim();
@@ -5713,8 +8841,16 @@ async function readGoogleDoc({documentId,query}){
     id=match?.id||'';
   }
   if(!id) throw new Error('No matching Google Doc found. Try the exact document title or paste the Google Doc URL.');
-  const doc=await googleApiJson(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}`,{headers:{Authorization:`Bearer ${token}`}});
-  const text=googleDocTextFromStructuralElements(doc.body?.content||[]).trim();
+  let doc;
+  try{
+    doc=await googleApiJson(googleDocsGetUrl(id),{headers:{Authorization:`Bearer ${token}`}});
+    doc=await googleDocWithExportFallback(id,doc,doc.title||match?.name||'Google Doc');
+  }catch(e){
+    if(!googleApiIsDocsDisabled(e)) throw e;
+    const html=await googleDriveExportText(id,'text/html');
+    doc=googleDocFromExportedHtml(html,match?.name||'Google Doc');
+  }
+  const text=googleDocExtractedText(doc);
   return {id,title:doc.title||match?.name||'Google Doc',url:googleDocUrl(id),text,match,otherMatches:matches.slice(1,5)};
 }
 async function googleDocsContextForQuery(query){
@@ -5869,6 +9005,1523 @@ async function uploadedValDocumentContextForQuery(query){
     `Source text excerpt:\n${sourceText.slice(0,55000)}`
   ].filter(Boolean).join('\n\n');
 }
+function micheleBookConfig(){
+  return {
+    title:process.env.MICHELE_BOOK_TITLE || CLIENT_CONFIG.projectName || 'The Big Trick',
+    masterDocId:googleDocIdFromInput(process.env.MICHELE_MASTER_MANUSCRIPT_DOC_ID || ''),
+    readingCopyDocId:googleDocIdFromInput(process.env.MICHELE_READING_COPY_DOC_ID || ''),
+    currentChapterNumber:Number(process.env.MICHELE_CURRENT_CHAPTER_NUMBER||0)||0
+  };
+}
+function gentleBookError(error){
+  console.error('[michele-book]',error);
+  const msg=String(error&&error.message||error||'');
+  if(/OPENAI_KEY not configured/i.test(msg)) return 'VAL’s writing brain is not connected yet. Please ask Jessa to check the OpenAI connection in Settings → API Keys & Connections or Railway.';
+  if(/This edit would greatly increase|Selected chapter was not found|looks like notes or a chat transcript|Reading\/output doc matches|MICHELE_READING_COPY_DOC_ID/i.test(msg)) return msg;
+  return 'I need one small setup fix before I can continue the book. Jessa can see the details in the admin panel.';
+}
+function googleDocParagraphText(el){
+  return (el?.paragraph?.elements||[]).map(part=>part.textRun?.content||'').join('');
+}
+function isMicheleChapterHeading(el){
+  const text=googleDocParagraphText(el).trim();
+  if(/^\s*Prologue\b/i.test(text)){
+    if(el?.paragraph?.paragraphStyle?.namedStyleType==='HEADING_1') return true;
+    return text.length<=160;
+  }
+  if(!/^\s*Chapter\s*#?\s*\d+/i.test(text)) return false;
+  if(el?.paragraph?.paragraphStyle?.namedStyleType==='HEADING_1') return true;
+  return /^\s*Chapter\s*#?\s*\d+\s*:/i.test(text)&&text.length<=220;
+}
+function parseMicheleChapterHeading(text){
+  const raw=String(text||'').trim();
+  const clean=raw.replace(/\s+/g,' ').trim();
+  if(/^\s*Prologue\b/i.test(clean)){
+    const split=splitMicheleHeadingTitleAndBody(clean.replace(/^\s*Prologue\s*:?\s*/i,''),'Prologue');
+    const title=split.title||'Prologue';
+    return {number:0,title,heading:title,label:title?`Prologue: ${title}`:'Prologue',bodyRemainder:split.bodyRemainder};
+  }
+  const m=clean.match(/^Chapter\s*#?\s*(\d+)\s*:?\s*(.*)$/i);
+  const number=m?Number(m[1]):0;
+  const split=splitMicheleHeadingTitleAndBody(m?(m[2]||clean):clean,number);
+  const title=split.title;
+  const heading=m?`Chapter #${number}${title?`: ${title}`:''}`:title;
+  return {number,title:title||`Chapter ${number}`,heading,label:m?`Chapter ${number}${title?`: ${title}`:''}`:title,bodyRemainder:split.bodyRemainder};
+}
+function splitMicheleHeadingTitleAndBody(value,number=''){
+  let text=String(value||'').replace(/\s+/g,' ').trim();
+  text=text.replace(/^[:\-–—\s]+/,'').trim();
+  let bodyRemainder='';
+  const bodyMarkers=[
+    /\s+(There[’']?s|There is|There are)\s+/i,
+    /\s+(You can[’']?t|I was|I remember|At that point|The intake process|Instead, I said|A few weeks later)\s+/i,
+    /\s+(Chapter\s+#?\d+\s*:)\s+/i
+  ];
+  for(const re of bodyMarkers){
+    const m=text.match(re);
+    if(m&&m.index>18){bodyRemainder=text.slice(m.index).trim();text=text.slice(0,m.index).trim();break;}
+  }
+  if(text.length>120){
+    const sentence=text.match(/^(.{35,120}?)(?:[.!?]\s|$)/);
+    const titleEnd=(sentence&&sentence[1]?sentence[1]:text.slice(0,110)).trim();
+    bodyRemainder=[text.slice(titleEnd.length).trim(),bodyRemainder].filter(Boolean).join(' ').trim();
+    text=titleEnd;
+  }
+  text=text.replace(/\(\s+/g,'(').replace(/\s+\)/g,')').replace(/\s{2,}/g,' ').trim();
+  if(!text&&Number(number)===0) text='Prologue';
+  return {title:text,bodyRemainder};
+}
+function sanitizeMicheleChapterTitle(value,number=''){
+  return splitMicheleHeadingTitleAndBody(value,number).title;
+}
+function googleDocTextBetweenElements(elements,startIndex,endIndex){
+  return (elements||[])
+    .filter(el=>Number(el.startIndex||0)>=startIndex&&Number(el.endIndex||0)<=endIndex)
+    .map(el=>googleDocTextFromStructuralElements([el]))
+    .join('')
+    .trim();
+}
+function parseMicheleDocChapters(doc){
+  const elements=googleDocStructuralElements(doc);
+  const headings=[];
+  elements.forEach((el,idx)=>{if(isMicheleChapterHeading(el))headings.push({el,idx,...parseMicheleChapterHeading(googleDocParagraphText(el))});});
+  return headings.map((h,i)=>{
+    const next=headings[i+1]?.el;
+    const startIndex=Number(h.el.startIndex||1);
+    const bodyStartIndex=Number(h.el.endIndex||startIndex+1);
+    const endIndex=next?Number(next.startIndex||googleDocEndIndex(doc)):googleDocEndIndex(doc);
+    const bodyText=googleDocTextBetweenElements(elements,bodyStartIndex,endIndex);
+    const currentText=[h.bodyRemainder,bodyText].filter(Boolean).join('\n\n').trim();
+    return {chapterNumber:h.number,chapterTitle:h.title||h.heading,googleDocSectionMarker:h.heading,startIndex,bodyStartIndex,endIndex,currentText,status:i===0?'in_progress':'draft'};
+  });
+}
+async function readGoogleDocRaw(documentId){
+  const token=await googleDocsToken();
+  const id=googleDocIdFromInput(documentId);
+  if(!id) throw new Error('Missing Google Doc ID.');
+  try{
+    const doc=await googleApiJson(googleDocsGetUrl(id),{headers:{Authorization:`Bearer ${token}`}});
+    return googleDocWithExportFallback(id,doc,doc.title||'Google Doc');
+  }catch(e){
+    if(!googleApiIsDocsDisabled(e)) throw e;
+    const html=await googleDriveExportText(id,'text/html');
+    return googleDocFromExportedHtml(html,'Google Doc');
+  }
+}
+async function replaceGoogleDocRange({documentId,startIndex,endIndex,text}){
+  const token=await googleDocsToken();
+  const id=googleDocIdFromInput(documentId);
+  const clean=String(text||'').replace(/\r\n/g,'\n').trim();
+  if(!id) throw new Error('Missing Google Doc ID.');
+  if(!clean) throw new Error('Rewrite returned empty chapter text.');
+  const requests=[];
+  if(Number(endIndex)>Number(startIndex)) requests.push({deleteContentRange:{range:{startIndex:Number(startIndex),endIndex:Number(endIndex)}}});
+  requests.push({insertText:{location:{index:Number(startIndex)},text:clean+'\n'}});
+  return googleApiJson(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}:batchUpdate`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requests})});
+}
+async function googleDocsBatchUpdate(documentId,requests){
+  const token=await googleDocsToken();
+  const id=googleDocIdFromInput(documentId);
+  if(!id) throw new Error('Missing Google Doc ID.');
+  if(!Array.isArray(requests)||!requests.length) return {id,url:googleDocUrl(id),skipped:true};
+  return googleApiJson(`https://docs.googleapis.com/v1/documents/${encodeURIComponent(id)}:batchUpdate`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({requests})});
+}
+function nextStoreArray(store,key){store[key]=Array.isArray(store[key])?store[key]:[];return store[key];}
+async function ensureMicheleBookProject(){
+  await valDbReady;
+  const cfg=micheleBookConfig();
+  const userId=currentUserId(),tenant=tenantId();
+  if(pgPool){
+    const existing=await dbQuery('select * from book_projects where tenant_id=$1 and owner_user_id=$2 order by created_at asc limit 1',[tenant,userId]);
+    if(existing.rows[0]){
+      const nextMaster=existing.rows[0].master_doc_id||cfg.masterDocId||'';
+      const nextReading=existing.rows[0].reading_copy_doc_id||cfg.readingCopyDocId||'';
+      if(!nextMaster) throw new Error('MICHELE_MASTER_MANUSCRIPT_DOC_ID is not configured.');
+      return {...existing.rows[0],title:existing.rows[0].title||cfg.title,master_doc_id:nextMaster,reading_copy_doc_id:nextReading};
+    }
+    if(!cfg.masterDocId) throw new Error('MICHELE_MASTER_MANUSCRIPT_DOC_ID is not configured.');
+    const id=uuid('book');
+    await dbQuery('insert into book_projects (id,owner_user_id,tenant_id,title,master_doc_id,reading_copy_doc_id,status) values ($1,$2,$3,$4,$5,$6,$7)',[id,userId,tenant,cfg.title,cfg.masterDocId,cfg.readingCopyDocId,'active']);
+    return {id,owner_user_id:userId,tenant_id:tenant,title:cfg.title,master_doc_id:cfg.masterDocId,reading_copy_doc_id:cfg.readingCopyDocId,status:'active'};
+  }
+  const store=valStore(),rows=nextStoreArray(store,'bookProjects');
+  let row=rows.find(r=>r.tenantId===tenant&&r.ownerUserId===userId);
+  if(!row){
+    if(!cfg.masterDocId) throw new Error('MICHELE_MASTER_MANUSCRIPT_DOC_ID is not configured.');
+    row={id:uuid('book'),ownerUserId:userId,tenantId:tenant,title:cfg.title,masterDocId:cfg.masterDocId,readingCopyDocId:cfg.readingCopyDocId,status:'active',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};rows.push(row);
+  }
+  const nextMaster=row.masterDocId||cfg.masterDocId||'';
+  const nextReading=row.readingCopyDocId||cfg.readingCopyDocId||'';
+  if(!nextMaster) throw new Error('MICHELE_MASTER_MANUSCRIPT_DOC_ID is not configured.');
+  Object.assign(row,{title:row.title||cfg.title,masterDocId:nextMaster,readingCopyDocId:nextReading,updatedAt:new Date().toISOString()});saveValStore(store);return row;
+}
+function bookProjectId(project){return project.id;}
+function bookProjectMasterDocId(project){return project.master_doc_id||project.masterDocId||micheleBookConfig().masterDocId;}
+function bookProjectReadingDocId(project){return project.reading_copy_doc_id||project.readingCopyDocId||micheleBookConfig().readingCopyDocId;}
+async function updateMicheleBookProjectConfig({masterDocId,readingCopyDocId,title}){
+  await valDbReady;
+  const cfg=micheleBookConfig();
+  const nextMaster=googleDocIdFromInput(masterDocId||cfg.masterDocId||'');
+  const nextReading=googleDocIdFromInput(readingCopyDocId||cfg.readingCopyDocId||'');
+  const nextTitle=String(title||cfg.title||'The Big Trick').trim();
+  if(!nextMaster) throw new Error('A source manuscript Google Doc ID is required.');
+  const userId=currentUserId(),tenant=tenantId();
+  if(pgPool){
+    const existing=await dbQuery('select * from book_projects where tenant_id=$1 and owner_user_id=$2 order by created_at asc limit 1',[tenant,userId]);
+    const id=existing.rows[0]?.id||uuid('book');
+    if(existing.rows[0]) await dbQuery('update book_projects set title=$1,master_doc_id=$2,reading_copy_doc_id=$3,updated_at=now() where id=$4',[nextTitle,nextMaster,nextReading,id]);
+    else await dbQuery('insert into book_projects (id,owner_user_id,tenant_id,title,master_doc_id,reading_copy_doc_id,status) values ($1,$2,$3,$4,$5,$6,$7)',[id,userId,tenant,nextTitle,nextMaster,nextReading,'active']);
+    return {id,title:nextTitle,masterDocId:nextMaster,readingCopyDocId:nextReading};
+  }
+  const store=valStore(),rows=nextStoreArray(store,'bookProjects');
+  let row=rows.find(r=>r.tenantId===tenant&&r.ownerUserId===userId);
+  if(!row){row={id:uuid('book'),ownerUserId:userId,tenantId:tenant,status:'active',createdAt:new Date().toISOString()};rows.push(row);}
+  Object.assign(row,{title:nextTitle,masterDocId:nextMaster,readingCopyDocId:nextReading,updatedAt:new Date().toISOString()});
+  saveValStore(store);
+  return {id:row.id,title:nextTitle,masterDocId:nextMaster,readingCopyDocId:nextReading};
+}
+function micheleMasterEditsChapterMatches(chapter,text){
+  const body=String(text||'');
+  if(!body) return [];
+  const pages=body.split(/\n(?=--- Page \d+ ---)/g).map(p=>p.trim()).filter(Boolean);
+  const titleWords=String(chapter.chapterTitle||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>4);
+  const chapterNum=Number(chapter.chapterNumber||0);
+  const exactChapter=new RegExp(`\\bchapter\\s*#?\\s*${chapterNum}\\b`,'i');
+  return pages.filter(page=>{
+    const lower=page.toLowerCase();
+    if(exactChapter.test(page)) return true;
+    if(titleWords.length>=2){
+      const hits=titleWords.filter(w=>lower.includes(w)).length;
+      if(hits>=Math.min(3,titleWords.length)) return true;
+    }
+    return false;
+  }).slice(0,8);
+}
+function micheleMasterEditsGlobalNoteText(text){
+  const raw=String(text||'').trim();
+  if(!raw) return '';
+  const directive=[
+    'Master Edits 1 prior VAL conversation notes. Apply point by point where applicable as Michele moves chapter by chapter.',
+    'Start at the very beginning of the book and move forward in order unless Jessa/admin changes the current chapter.',
+    'Protect Michele’s voice: funny, warm, spiritually alert, bodily aware, irreverent, specific, and embodied.',
+    'Do not merely suggest edits. Rewrite the chapter directly according to Michele’s response and these notes.'
+  ].join('\n');
+  return `${directive}\n\n${raw.slice(0,14000)}`;
+}
+async function micheleEditorNoteExists(chapterId,noteType){
+  if(pgPool){const r=await dbQuery('select id from editor_notes where chapter_id=$1 and note_type=$2 limit 1',[chapterId,noteType]);return !!r.rows[0];}
+  return (valStore().editorNotes||[]).some(n=>n.chapterId===chapterId&&n.noteType===noteType);
+}
+async function addMicheleEditorNote(chapterId,noteType,noteText,priority='high'){
+  const text=String(noteText||'').trim();
+  if(!text||await micheleEditorNoteExists(chapterId,noteType)) return false;
+  if(pgPool) await dbQuery('insert into editor_notes (id,chapter_id,note_type,note_text,priority,status,created_at) values ($1,$2,$3,$4,$5,$6,now())',[uuid('note'),chapterId,noteType,text,priority,'open']);
+  else{const store=valStore();nextStoreArray(store,'editorNotes').push({id:uuid('note'),chapterId,noteType,noteText:text,priority,status:'open',createdAt:new Date().toISOString()});saveValStore(store);}
+  return true;
+}
+async function importMicheleMasterEdits({project,chapters,text,sourceTitle='Master Edits'}){
+  const edits=String(text||'').trim();
+  if(!edits||!Array.isArray(chapters)||!chapters.length) return {imported:false,count:0};
+  const globalNote=micheleMasterEditsGlobalNoteText(edits);
+  const baseType='import_'+slugifyClient(sourceTitle||'master_edits').slice(0,50);
+  let count=0;
+  for(const chapter of chapters){
+    if(await addMicheleEditorNote(chapter.id,`${baseType}_global`,globalNote,'high')) count++;
+    const matches=micheleMasterEditsChapterMatches(chapter,edits);
+    if(matches.length){
+      const specific=[
+        `${sourceTitle} notes matched to Chapter #${chapter.chapterNumber}: ${chapter.chapterTitle}.`,
+        'Use these point by point where applicable, but preserve Michele’s voice and the manuscript sequence.',
+        ...matches
+      ].join('\n\n');
+      if(await addMicheleEditorNote(chapter.id,`${baseType}_chapter_match`,specific.slice(0,24000),'high')) count++;
+    }
+  }
+  return {imported:true,count,sourceTitle};
+}
+function normalizeBookChapter(row){
+  const chapterNumber=row.chapter_number??row.chapterNumber;
+  const marker=row.google_doc_section_marker||row.googleDocSectionMarker;
+  const rawTitle=row.chapter_title||row.chapterTitle||'';
+  const title=sanitizeMicheleChapterTitle(rawTitle,chapterNumber)||sanitizeMicheleChapterTitle(String(marker||'').replace(/^\s*Chapter\s*#?\s*\d+\s*:?\s*/i,''),chapterNumber)||rawTitle;
+  return {id:row.id,bookProjectId:row.book_project_id||row.bookProjectId,chapterNumber,chapterTitle:title,googleDocSectionMarker:marker,currentText:row.current_text||row.currentText||'',status:row.status||'draft',lastSyncedAt:row.last_synced_at?row.last_synced_at.toISOString?.()||row.last_synced_at:row.lastSyncedAt||'',startIndex:row.start_index??row.startIndex,bodyStartIndex:row.body_start_index??row.bodyStartIndex,endIndex:row.end_index??row.endIndex};
+}
+function parseBookConversationJson(value,fallback){
+  if(value===undefined||value===null) return fallback;
+  if(Array.isArray(value)||typeof value==='object') return value;
+  try{return JSON.parse(String(value));}catch(_){return fallback;}
+}
+function normalizeBookConversationSession(row){
+  if(!row) return null;
+  const obj={
+    id:row.id,
+    bookProjectId:row.book_project_id||row.bookProjectId,
+    chapterId:row.chapter_id||row.chapterId||'',
+    userId:row.user_id||row.userId||'default',
+    tenantId:row.tenant_id||row.tenantId||'default',
+    status:row.status||'active',
+    mode:row.mode||'interview',
+    currentGoal:row.current_goal||row.currentGoal||'',
+    lastQuestion:row.last_question||row.lastQuestion||'',
+    questionsAsked:parseBookConversationJson(row.questions_asked??row.questionsAsked,[]),
+    storyBeats:parseBookConversationJson(row.story_beats??row.storyBeats,[]),
+    emotionalThreads:parseBookConversationJson(row.emotional_threads??row.emotionalThreads,[]),
+    sceneDetails:parseBookConversationJson(row.scene_details??row.sceneDetails,[]),
+    humorThreads:parseBookConversationJson(row.humor_threads??row.humorThreads,[]),
+    readerTakeaways:parseBookConversationJson(row.reader_takeaways??row.readerTakeaways,[]),
+    rewriteDirection:row.rewrite_direction||row.rewriteDirection||'',
+    readinessScore:Number((row.readiness_score??row.readinessScore)||0),
+    metadata:parseBookConversationJson(row.metadata_json??row.metadata,{})
+  };
+  obj.createdAt=row.created_at?row.created_at.toISOString?.()||row.created_at:row.createdAt||'';
+  obj.updatedAt=row.updated_at?row.updated_at.toISOString?.()||row.updated_at:row.updatedAt||'';
+  return obj;
+}
+function normalizeBookConversationTurn(row){
+  if(!row) return null;
+  return {
+    id:row.id,
+    sessionId:row.session_id||row.sessionId,
+    role:row.role,
+    content:row.content||'',
+    inputType:row.input_type||row.inputType||'text',
+    metadata:parseBookConversationJson(row.metadata_json??row.metadata,{}),
+    createdAt:row.created_at?row.created_at.toISOString?.()||row.created_at:row.createdAt||''
+  };
+}
+function publicBookConversationSession(session,turns=[]){
+  const s=normalizeBookConversationSession(session)||{};
+  return {
+    id:s.id,
+    chapterId:s.chapterId,
+    mode:s.mode,
+    lastQuestion:s.lastQuestion,
+    rewriteDirection:s.rewriteDirection,
+    readinessScore:s.readinessScore||0,
+    editorialMove:(s.metadata&&s.metadata.editorialMove)||'',
+    storyBeats:s.storyBeats||[],
+    emotionalThreads:s.emotionalThreads||[],
+    sceneDetails:s.sceneDetails||[],
+    humorThreads:s.humorThreads||[],
+    readerTakeaways:s.readerTakeaways||[],
+    turns:(turns||[]).map(normalizeBookConversationTurn).filter(Boolean).map(t=>({role:t.role,content:t.content,inputType:t.inputType,createdAt:t.createdAt})).slice(-12)
+  };
+}
+async function getOrCreateMicheleBookSession({project,chapter,mode='interview'}){
+  await valDbReady;
+  const projectId=bookProjectId(project);
+  const chapterId=chapter?.id||'';
+  const userId=currentUserId(),tenant=tenantId();
+  if(pgPool){
+    const existing=await dbQuery("select * from book_conversation_sessions where tenant_id=$1 and user_id=$2 and book_project_id=$3 and chapter_id=$4 and status='active' order by updated_at desc limit 1",[tenant,userId,projectId,chapterId]);
+    if(existing.rows[0]){
+      if(mode&&existing.rows[0].mode!==mode) await dbQuery('update book_conversation_sessions set mode=$1,updated_at=now() where id=$2',[mode,existing.rows[0].id]);
+      return normalizeBookConversationSession({...existing.rows[0],mode:mode||existing.rows[0].mode});
+    }
+    const id=uuid('bookchat');
+    await dbQuery('insert into book_conversation_sessions (id,book_project_id,chapter_id,user_id,tenant_id,mode,current_goal,metadata_json) values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)',[id,projectId,chapterId,userId,tenant,mode||'interview','understand chapter direction before rewriting',JSON.stringify({chapterLabel:micheleChapterLabel(chapter)})]);
+    const created=await dbQuery('select * from book_conversation_sessions where id=$1',[id]);
+    return normalizeBookConversationSession(created.rows[0]);
+  }
+  const store=valStore(),rows=nextStoreArray(store,'bookConversationSessions');
+  let row=rows.filter(r=>r.tenantId===tenant&&r.userId===userId&&r.bookProjectId===projectId&&r.chapterId===chapterId&&r.status==='active').sort((a,b)=>String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')))[0];
+  if(!row){
+    row={id:uuid('bookchat'),bookProjectId:projectId,chapterId,userId,tenantId:tenant,status:'active',mode:mode||'interview',currentGoal:'understand chapter direction before rewriting',lastQuestion:'',questionsAsked:[],storyBeats:[],emotionalThreads:[],sceneDetails:[],humorThreads:[],readerTakeaways:[],rewriteDirection:'',readinessScore:0,metadata:{chapterLabel:micheleChapterLabel(chapter)},createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    rows.push(row);
+  }else if(mode){row.mode=mode;row.updatedAt=new Date().toISOString();}
+  saveValStore(store);
+  return normalizeBookConversationSession(row);
+}
+async function listMicheleBookSessionTurns(sessionId,limit=24){
+  await valDbReady;
+  if(!sessionId) return [];
+  if(pgPool){
+    const r=await dbQuery('select * from book_conversation_turns where session_id=$1 order by created_at asc',[sessionId]);
+    return r.rows.map(normalizeBookConversationTurn).slice(-Math.max(1,limit));
+  }
+  return (valStore().bookConversationTurns||[]).filter(t=>t.sessionId===sessionId).sort((a,b)=>String(a.createdAt||'').localeCompare(String(b.createdAt||''))).map(normalizeBookConversationTurn).slice(-Math.max(1,limit));
+}
+async function appendMicheleBookTurn({sessionId,role,content,inputType='text',metadata={}}){
+  const text=String(content||'').trim();
+  if(!sessionId||!role||!text) return null;
+  const row={id:uuid('bookturn'),sessionId,role,content:text,inputType,metadata,createdAt:new Date().toISOString()};
+  if(pgPool) await dbQuery('insert into book_conversation_turns (id,session_id,role,content,input_type,metadata_json,created_at) values ($1,$2,$3,$4,$5,$6::jsonb,now())',[row.id,sessionId,role,text,inputType,JSON.stringify(metadata||{})]);
+  else{const store=valStore();nextStoreArray(store,'bookConversationTurns').push(row);saveValStore(store);}
+  return normalizeBookConversationTurn(row);
+}
+function mergeUniqueShort(existing=[],incoming=[],limit=12){
+  const out=[];
+  [...(Array.isArray(existing)?existing:[]),...(Array.isArray(incoming)?incoming:[])].forEach(v=>{
+    const text=String(v||'').replace(/\s+/g,' ').trim();
+    if(text&&!out.some(x=>x.toLowerCase()===text.toLowerCase())) out.push(text.length>260?text.slice(0,257).trim()+'…':text);
+  });
+  return out.slice(-limit);
+}
+async function updateMicheleBookSessionState(session,updates={}){
+  const current=normalizeBookConversationSession(session);
+  if(!current?.id) return current;
+  const next={
+    mode:updates.mode||current.mode||'interview',
+    currentGoal:updates.currentGoal??current.currentGoal,
+    lastQuestion:updates.lastQuestion??current.lastQuestion,
+    questionsAsked:mergeUniqueShort(current.questionsAsked,updates.questionsAsked||[],18),
+    storyBeats:mergeUniqueShort(current.storyBeats,updates.storyBeats||[],18),
+    emotionalThreads:mergeUniqueShort(current.emotionalThreads,updates.emotionalThreads||[],14),
+    sceneDetails:mergeUniqueShort(current.sceneDetails,updates.sceneDetails||[],14),
+    humorThreads:mergeUniqueShort(current.humorThreads,updates.humorThreads||[],12),
+    readerTakeaways:mergeUniqueShort(current.readerTakeaways,updates.readerTakeaways||[],12),
+    rewriteDirection:String((updates.rewriteDirection??current.rewriteDirection)||'').trim().slice(0,9000),
+    readinessScore:Math.max(0,Math.min(100,Number((updates.readinessScore??current.readinessScore)||0))),
+    metadata:Object.assign({},current.metadata||{},updates.metadata||{})
+  };
+  if(pgPool){
+    await dbQuery('update book_conversation_sessions set mode=$1,current_goal=$2,last_question=$3,questions_asked=$4::jsonb,story_beats=$5::jsonb,emotional_threads=$6::jsonb,scene_details=$7::jsonb,humor_threads=$8::jsonb,reader_takeaways=$9::jsonb,rewrite_direction=$10,readiness_score=$11,metadata_json=$12::jsonb,updated_at=now() where id=$13',[next.mode,next.currentGoal,next.lastQuestion,JSON.stringify(next.questionsAsked),JSON.stringify(next.storyBeats),JSON.stringify(next.emotionalThreads),JSON.stringify(next.sceneDetails),JSON.stringify(next.humorThreads),JSON.stringify(next.readerTakeaways),next.rewriteDirection,next.readinessScore,JSON.stringify(next.metadata),current.id]);
+  }else{
+    const store=valStore(),row=nextStoreArray(store,'bookConversationSessions').find(r=>r.id===current.id);
+    if(row) Object.assign(row,next,{updatedAt:new Date().toISOString()});
+    saveValStore(store);
+  }
+  return normalizeBookConversationSession(Object.assign({},current,next,{updatedAt:new Date().toISOString()}));
+}
+function micheleConversationStateInstruction(session,turns=[]){
+  const s=normalizeBookConversationSession(session)||{};
+  const recent=(turns||[]).slice(-12).map(t=>(t.role==='user'?'Michele':'VAL')+': '+String(t.content||'')).join('\n');
+  return [
+    s.rewriteDirection?`Accumulated rewrite direction:\n${s.rewriteDirection}`:'',
+    s.storyBeats?.length?`Story beats Michele surfaced:\n- ${s.storyBeats.join('\n- ')}`:'',
+    s.emotionalThreads?.length?`Emotional threads:\n- ${s.emotionalThreads.join('\n- ')}`:'',
+    s.sceneDetails?.length?`Scene details:\n- ${s.sceneDetails.join('\n- ')}`:'',
+    s.humorThreads?.length?`Humor threads:\n- ${s.humorThreads.join('\n- ')}`:'',
+    s.readerTakeaways?.length?`Reader takeaways:\n- ${s.readerTakeaways.join('\n- ')}`:'',
+    recent?`Recent conversation:\n${recent}`:''
+  ].filter(Boolean).join('\n\n');
+}
+function micheleConversationPlannerFallback({chapter,userMessage,session,turns=[]}){
+  const asked=(session?.questionsAsked||[]).concat((turns||[]).filter(t=>t.role==='assistant').map(t=>t.content));
+  const userTurns=(turns||[]).filter(t=>t.role==='user').length;
+  const readiness=Math.min(92,35+(userTurns*15));
+  const editorialMove=readiness>=78?'write':(userTurns===0?'reflect':'explore');
+  const question=micheleNextFallbackQuestion(chapter,userMessage,asked.map(content=>({role:'assistant',content})));
+  return {
+    reply:editorialMove==='write'?'I have enough to shape this now. I’m ready to write the revision unless there is one last thing you want protected.':question,
+    readyToRewrite:editorialMove==='write',
+    readinessScore:readiness,
+    editorialMove,
+    storyBeats:[userMessage],
+    emotionalThreads:[],
+    sceneDetails:[],
+    humorThreads:[],
+    readerTakeaways:[],
+    currentGoal:'continue gathering chapter-specific rewrite direction',
+    rewriteDirection:[session?.rewriteDirection||'',`Michele added: ${userMessage}`].filter(Boolean).join('\n'),
+    mode:'interview'
+  };
+}
+async function michelePlanBookConversationTurn({chapter,userMessage,session,turns=[],lastCompletedChapter=null,mode='interview',voiceMode=false,notes=[],voiceProfile=null}){
+  const selectedMode=micheleEditorialMode(userMessage,mode||session?.mode||'interview');
+  const fallback=micheleConversationPlannerFallback({chapter,userMessage,session,turns});
+  const asksForAnswer=micheleMessageRequestsEditorialAnswer(userMessage);
+  const priorUserTurns=(turns||[]).filter(t=>t.role==='user').length;
+  const sessionReadiness=Number(session?.readinessScore||0);
+  const likelyReady=sessionReadiness>=78||priorUserTurns>=4||/\b(write it|write this|rewrite|i'?m ready|go ahead|do it|create revision|all of the above)\b/i.test(userMessage);
+  try{
+    const raw=await withMicheleModelTimeout(callValModel({json:true,temperature:selectedMode==='interview'?0.62:0.35,maxTokens:selectedMode==='interview'?900:1800,system:[
+      VAL_SYSTEM_PROMPT,
+      'You are the Conversation Layer for Michele Julian’s VAL book editor. You are not the Google Doc writer.',
+      'Michele is the person speaking. Be warm, intuitive, concrete, and conversational like an expert memoir coach.',
+      'You are not a question sequence. Choose one editorial move each turn: reflect, challenge, explore, or write.',
+      'Reflect means: start with a specific observation from the chapter or Michele’s last answer, then briefly test whether you are reading it correctly.',
+      'Challenge means: gently name where the scene, paragraph, emotional turn, or reader experience may not be landing yet.',
+      'Explore means: ask for one missing concrete detail, emotional truth, or reader-facing meaning from the exact thread Michele just raised.',
+      'Write means: stop asking and say you have enough to shape the revision. Invite only a final protection note, not another interview question.',
+      'The ideal style is: VAL notices something real; Michele responds; VAL follows that thread. No generic writing-class prompts.',
+      'Do not read the chapter aloud. Do not paste chapter text. Do not rewrite manuscript prose in this route.',
+      'Do not say “I hear you,” “Direction captured,” “Use this as rewrite direction,” or “Nothing has changed.”',
+      'If Michele asks for your thoughts, answer her thought first in 1-3 sentences, then ask one natural follow-up question.',
+      'If Michele answers a prior question, absorb her answer and decide whether to reflect, challenge, explore, or write. Do not automatically ask another question.',
+      'When Michele gives an answer, do not jump straight to the next question. First give one grounded sentence naming why her answer is useful.',
+      'Then give one grounded sentence naming how that answer will shape the edit: scene, humor, vulnerability, pacing, transition, reader understanding, or emotional center.',
+      'Then, only if editorialMove is reflect/challenge/explore, ask one next question. This should feel like live editorial feedback, not a quiz.',
+      'Good pattern: “That helps because ____. I can use that to ____. What I still want to understand is ____?”',
+      'Never ask Michele to choose between humor, scene, emotional truth, transitions, or reader takeaway. Assume all of those layers are needed.',
+      'If Michele says “all of the above,” treat that as permission to layer all relevant editorial improvements and ask for the next missing detail.',
+      'If Michele asks what chapter to work on, mention last completed and current chapter briefly, then ask whether to continue the current chapter, move to the next, or work on transitions/book-wide threads.',
+      'Begin each new chapter conversation with an observation, not a bare question: “I noticed…” or “I think the center may be…” then ask if that reading is right.',
+      'Do not over-interview. If readiness is 75 or higher, prefer editorialMove=write unless there is a serious missing fact.',
+      'If likelyReady is true, choose editorialMove=write unless Michele explicitly asks to keep talking.',
+      'Ask only one question when editorialMove is reflect, challenge, or explore. Ask no new substantive question when editorialMove is write.',
+      'Return strict JSON with keys: reply, editorialMove, readyToRewrite, readinessScore, currentGoal, storyBeats, emotionalThreads, sceneDetails, humorThreads, readerTakeaways, rewriteDirection.',
+      'reply must be under 115 words in voice mode and under 190 words otherwise. It must not include manuscript prose.',
+      'editorialMove must be one of reflect, challenge, explore, write.',
+      'rewriteDirection should accumulate the actual editing instruction for the eventual chapter rewrite.'
+    ].join('\n'),user:JSON.stringify({
+      mode:selectedMode,
+      voiceMode:!!voiceMode,
+      asksForEditorialAnswer:asksForAnswer,
+      likelyReady,
+      currentReadinessScore:sessionReadiness,
+      priorUserTurnCount:priorUserTurns,
+      currentChapter:{label:micheleChapterLabel(chapter),chapterNumber:chapter.chapterNumber,chapterTitle:chapter.chapterTitle,contextSummary:micheleChapterContextSummary(chapter),safeSignals:micheleWordSignals(chapter,12),excerpt:String(chapter.currentText||'').slice(0,9000)},
+      lastCompletedChapter:lastCompletedChapter?{chapterNumber:lastCompletedChapter.chapterNumber,chapterTitle:lastCompletedChapter.chapterTitle}:null,
+      session:{
+        lastQuestion:session?.lastQuestion||'',
+        questionsAsked:session?.questionsAsked||[],
+        storyBeats:session?.storyBeats||[],
+        emotionalThreads:session?.emotionalThreads||[],
+        sceneDetails:session?.sceneDetails||[],
+        humorThreads:session?.humorThreads||[],
+        readerTakeaways:session?.readerTakeaways||[],
+        rewriteDirection:session?.rewriteDirection||''
+      },
+      recentTurns:(turns||[]).slice(-10).map(t=>({role:t.role,content:String(t.content||'').slice(0,900)})),
+      micheleLatestMessage:userMessage,
+      editorNotes:(notes||[]).map(n=>String(n.note_text||n.noteText||'').slice(0,1600)).slice(0,3),
+      authorVoiceProfile:voiceProfile||null
+    })}),10000);
+    const parsed=JSON.parse(raw);
+    let reply=sanitizeMicheleEditorReply(parsed.reply||'').trim();
+    const priorTurns=(turns||[]).map(t=>({role:t.role,content:t.content}));
+    if(!reply||micheleConversationTextLooksLikeManuscript(reply,chapter)||micheleReplyRepeatsPriorQuestion(reply,priorTurns)){
+      reply=fallback.reply;
+    }
+    let editorialMove=String(parsed.editorialMove||fallback.editorialMove||'explore').toLowerCase().trim();
+    if(!['reflect','challenge','explore','write'].includes(editorialMove)) editorialMove=fallback.editorialMove||'explore';
+    let readinessScore=Math.max(0,Math.min(100,Number(parsed.readinessScore||fallback.readinessScore||0)));
+    if(likelyReady&&readinessScore<78) readinessScore=82;
+    const readyToRewrite=!!parsed.readyToRewrite || readinessScore>=78 || editorialMove==='write';
+    if(readyToRewrite&&editorialMove!=='write') editorialMove='write';
+    if(readyToRewrite&&/\?\s*$/.test(reply)&&!asksForAnswer){
+      reply='I have enough to shape this now. I’m ready to write the revision unless there is one last thing you want protected.';
+    }
+    if(voiceMode) reply=micheleVoiceSizedReply(reply);
+    return {
+      reply,
+      editorialMove,
+      readyToRewrite,
+      readinessScore,
+      currentGoal:String(parsed.currentGoal||fallback.currentGoal||'continue the chapter conversation').slice(0,300),
+      storyBeats:compactMicheleBullets(parsed.storyBeats||fallback.storyBeats),
+      emotionalThreads:compactMicheleBullets(parsed.emotionalThreads||fallback.emotionalThreads),
+      sceneDetails:compactMicheleBullets(parsed.sceneDetails||fallback.sceneDetails),
+      humorThreads:compactMicheleBullets(parsed.humorThreads||fallback.humorThreads),
+      readerTakeaways:compactMicheleBullets(parsed.readerTakeaways||fallback.readerTakeaways),
+      rewriteDirection:String(parsed.rewriteDirection||fallback.rewriteDirection||userMessage).trim(),
+      mode:selectedMode
+    };
+  }catch(e){
+    return fallback;
+  }
+}
+async function upsertMicheleChapters(project,chapters){
+  const projectId=bookProjectId(project);
+  if(pgPool){
+    for(const ch of chapters){
+      const existing=await dbQuery('select id from book_chapters where book_project_id=$1 and chapter_number=$2 limit 1',[projectId,ch.chapterNumber]);
+      const id=existing.rows[0]?.id||uuid('chap');
+      if(existing.rows[0]) await dbQuery('update book_chapters set chapter_title=$1,google_doc_section_marker=$2,start_index=$3,body_start_index=$4,end_index=$5,current_text=$6,last_synced_at=now() where id=$7',[ch.chapterTitle,ch.googleDocSectionMarker,ch.startIndex,ch.bodyStartIndex,ch.endIndex,ch.currentText,id]);
+      else await dbQuery('insert into book_chapters (id,book_project_id,chapter_number,chapter_title,google_doc_section_marker,start_index,body_start_index,end_index,current_text,status,last_synced_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())',[id,projectId,ch.chapterNumber,ch.chapterTitle,ch.googleDocSectionMarker,ch.startIndex,ch.bodyStartIndex,ch.endIndex,ch.currentText,ch.status||'draft']);
+    }
+    const r=await dbQuery('select * from book_chapters where book_project_id=$1 order by chapter_number nulls last, google_doc_section_marker',[projectId]);
+    return r.rows.map(normalizeBookChapter);
+  }
+  const store=valStore(),rows=nextStoreArray(store,'bookChapters');
+  chapters.forEach(ch=>{let row=rows.find(r=>r.bookProjectId===projectId&&Number(r.chapterNumber)===Number(ch.chapterNumber));if(!row){row={id:uuid('chap'),bookProjectId:projectId,status:ch.status||'draft'};rows.push(row);}Object.assign(row,{chapterNumber:ch.chapterNumber,chapterTitle:ch.chapterTitle,googleDocSectionMarker:ch.googleDocSectionMarker,startIndex:ch.startIndex,bodyStartIndex:ch.bodyStartIndex,endIndex:ch.endIndex,currentText:ch.currentText,lastSyncedAt:new Date().toISOString()});});
+  saveValStore(store);return rows.filter(r=>r.bookProjectId===projectId).sort((a,b)=>Number(a.chapterNumber||999)-Number(b.chapterNumber||999)).map(normalizeBookChapter);
+}
+async function syncMicheleBookFromDocs(){
+  const project=await ensureMicheleBookProject();
+  const doc=await readGoogleDocRaw(bookProjectMasterDocId(project));
+  const parsed=parseMicheleDocChapters(doc);
+  if(!parsed.length) throw new Error('No Heading 1 chapter headings matching "Prologue" or "Chapter #1:" were found.');
+  const chapters=await upsertMicheleChapters(project,parsed);
+  return {project,doc,chapters};
+}
+async function setMicheleCurrentChapter(project,chapter){
+  if(!project||!chapter) return;
+  if(pgPool) await dbQuery('update book_projects set current_chapter_id=$1,updated_at=now() where id=$2',[chapter.id,bookProjectId(project)]);
+  else{
+    const store=valStore(),row=nextStoreArray(store,'bookProjects').find(r=>r.id===bookProjectId(project));
+    if(row){row.currentChapterId=chapter.id;row.updatedAt=new Date().toISOString();saveValStore(store);}
+  }
+}
+async function markMicheleChapterProgress(project,{completedChapter,nextChapter}={}){
+  if(completedChapter){
+    if(pgPool) await dbQuery('update book_chapters set status=$1,last_synced_at=now() where id=$2',['completed',completedChapter.id]);
+    else{const store=valStore(),row=nextStoreArray(store,'bookChapters').find(c=>c.id===completedChapter.id);if(row){row.status='completed';row.lastSyncedAt=new Date().toISOString();}saveValStore(store);}
+  }
+  if(nextChapter){
+    if(pgPool) await dbQuery('update book_chapters set status=$1,last_synced_at=now() where id=$2 and status<>$3',['in_progress',nextChapter.id,'completed']);
+    else{const store=valStore(),row=nextStoreArray(store,'bookChapters').find(c=>c.id===nextChapter.id);if(row&&row.status!=='completed'){row.status='in_progress';row.lastSyncedAt=new Date().toISOString();}saveValStore(store);}
+    await setMicheleCurrentChapter(project,nextChapter);
+  }
+}
+async function latestMicheleCompletedChapter(project,chapters){
+  const projectId=bookProjectId(project);
+  if(pgPool){
+    const r=await dbQuery("select c.* from rewrite_jobs j join book_chapters c on c.id=j.chapter_id where c.book_project_id=$1 and j.status='completed' order by j.completed_at desc nulls last, j.created_at desc limit 1",[projectId]);
+    if(r.rows[0]) return normalizeBookChapter(r.rows[0]);
+  }else{
+    const rows=(valStore().rewriteJobs||[]).filter(j=>j.status==='completed').sort((a,b)=>String(b.completedAt||b.createdAt||'').localeCompare(String(a.completedAt||a.createdAt||'')));
+    const ids=new Set((chapters||[]).map(ch=>ch.id));
+    const job=rows.find(j=>ids.has(j.chapterId));
+    if(job) return chapters.find(ch=>ch.id===job.chapterId)||null;
+  }
+  return null;
+}
+function nextMicheleChapterAfter(chapters,chapter){
+  if(!chapter) return null;
+  const lastNumber=Number(chapter.chapterNumber||chapter.chapter_number||0);
+  return (chapters||[]).filter(ch=>Number(ch.chapterNumber||0)>lastNumber).sort((a,b)=>Number(a.chapterNumber||999)-Number(b.chapterNumber||999))[0]||null;
+}
+async function getMicheleCurrentChapter(project,chapters){
+  const cfg=micheleBookConfig();
+  const currentId=project.current_chapter_id||project.currentChapterId||'';
+  let chapter=null;
+  const latestCompleted=await latestMicheleCompletedChapter(project,chapters);
+  const nextAfterCompleted=nextMicheleChapterAfter(chapters,latestCompleted);
+  if(cfg.currentChapterNumber) chapter=chapters.find(ch=>Number(ch.chapterNumber)===cfg.currentChapterNumber)||null;
+  if(!chapter&&latestCompleted&&nextAfterCompleted) chapter=nextAfterCompleted;
+  if(!chapter){
+    const current=chapters.find(ch=>ch.id===currentId)||null;
+    chapter=current&&current.status!=='completed'?current:null;
+  }
+  if(!chapter) chapter=chapters.find(ch=>ch.status==='in_progress')||chapters[0]||null;
+  if(chapter&&chapter.id!==currentId){
+    await setMicheleCurrentChapter(project,chapter);
+  }
+  return chapter;
+}
+function micheleImportedNoteScore(row,chapter){
+  const text=String(row.raw_text||row.rawText||'').toLowerCase();
+  const metadata=row.metadata||{};
+  let score=0;
+  const num=Number(chapter?.chapterNumber||chapter?.chapter_number||0);
+  if(num&&new RegExp(`\\bchapter\\s*#?\\s*${num}\\b`,'i').test(text)) score+=30;
+  const words=String(chapter?.chapterTitle||chapter?.chapter_title||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).filter(w=>w.length>4);
+  score+=words.filter(w=>text.includes(w)).length*6;
+  const idx=Number(metadata.chunkIndex||metadata.chunk_index||0);
+  if(idx&&idx<=3) score+=4;
+  return score;
+}
+async function listMicheleImportedEditorNotes(chapter){
+  let rows=[];
+  if(pgPool){
+    const r=await dbQuery("select kind,summary,raw_text,metadata,created_at from val_memory_items where user_id=$1 and kind in ('book_editor_notes_import','master_edits_import','knowledge_document') order by created_at desc limit 120",[currentUserId()]);
+    rows=r.rows;
+  }else{
+    rows=(valStore().memoryItems||[]).filter(m=>['book_editor_notes_import','master_edits_import','knowledge_document'].includes(m.kind)).map(m=>({kind:m.kind,summary:m.summary,raw_text:m.rawText,metadata:m.metadata,created_at:m.createdAt}));
+  }
+  const imported=rows.filter(row=>{
+    const hay=[row.kind,row.summary,row.metadata?.source,row.metadata?.sourceTitle,row.metadata?.intendedUse].filter(Boolean).join(' ').toLowerCase();
+    return /master edits|editor notes|chapter_by_chapter|book_editor_notes/i.test(hay);
+  });
+  if(!imported.length) return [];
+  const scored=imported.map(row=>({...row,_score:micheleImportedNoteScore(row,chapter)})).sort((a,b)=>(b._score-a._score)||Number(a.metadata?.chunkIndex||99)-Number(b.metadata?.chunkIndex||99));
+  const selected=(scored.some(r=>r._score>0)?scored.filter(r=>r._score>0):scored).slice(0,5);
+  return selected.map((row,i)=>({id:`memory_${i}`,note_type:'imported_prior_editor_notes',note_text:`${row.summary||'Imported prior editor notes'}\n\n${String(row.raw_text||'').slice(0,9000)}`,priority:'high',status:'open'}));
+}
+async function listMicheleEditorNotes(chapterId,chapter=null){
+  let notes=[];
+  if(pgPool){const r=await dbQuery('select * from editor_notes where chapter_id=$1 and status<>$2 order by created_at desc limit 20',[chapterId,'closed']);notes=r.rows;}
+  else notes=(valStore().editorNotes||[]).filter(n=>n.chapterId===chapterId&&n.status!=='closed').slice(-20).reverse();
+  const imported=await listMicheleImportedEditorNotes(chapter).catch(e=>{console.warn('[michele-book] Imported note lookup skipped:',e.message);return [];});
+  return notes.concat(imported);
+}
+async function getMicheleVoiceProfile(projectId){
+  if(pgPool){const r=await dbQuery('select * from author_voice_profile where book_project_id=$1 order by updated_at desc limit 1',[projectId]);return r.rows[0]||null;}
+  return (valStore().authorVoiceProfiles||[]).find(p=>p.bookProjectId===projectId)||null;
+}
+function jsonArrayField(value){return Array.isArray(value)?value:(typeof value==='string'?value.split(/\n|,/).map(x=>x.trim()).filter(Boolean):[]);}
+async function saveMicheleFeedback({chapterId,editorNoteId='',response,interpretedInstruction='',sentiment=''}){
+  const row={id:uuid('fb'),chapterId,editorNoteId,micheleResponse:String(response||''),interpretedInstruction,sentiment,createdAt:new Date().toISOString()};
+  if(pgPool) await dbQuery('insert into michele_feedback (id,chapter_id,editor_note_id,michele_response,interpreted_instruction,sentiment,created_at) values ($1,$2,$3,$4,$5,$6,now())',[row.id,chapterId,editorNoteId||null,row.micheleResponse,interpretedInstruction,sentiment]);
+  else{const store=valStore();nextStoreArray(store,'micheleFeedback').push(row);saveValStore(store);}
+  return row;
+}
+async function saveChapterSnapshot(chapter,changeSummary='Snapshot before rewrite',source='before_rewrite'){
+  const chapterId=chapter.id;
+  let versionNumber=1;
+  if(pgPool){const r=await dbQuery('select coalesce(max(version_number),0)+1 as next from chapter_versions where chapter_id=$1',[chapterId]);versionNumber=Number(r.rows[0]?.next||1);await dbQuery('insert into chapter_versions (id,chapter_id,version_number,full_text,change_summary,source,created_at) values ($1,$2,$3,$4,$5,$6,now())',[uuid('ver'),chapterId,versionNumber,chapter.currentText||'',changeSummary,source]);}
+  else{const store=valStore(),rows=nextStoreArray(store,'chapterVersions').filter(v=>v.chapterId===chapterId);versionNumber=rows.reduce((m,v)=>Math.max(m,Number(v.versionNumber)||0),0)+1;nextStoreArray(store,'chapterVersions').push({id:uuid('ver'),chapterId,versionNumber,fullText:chapter.currentText||'',changeSummary,source,createdAt:new Date().toISOString()});saveValStore(store);}
+  return {chapterId,versionNumber};
+}
+async function saveChapterVersionText(chapter,fullText,changeSummary='Snapshot before write',source='before_google_doc_write'){
+  return saveChapterSnapshot({...chapter,currentText:String(fullText||'')},changeSummary,source);
+}
+async function createRewriteJob(chapter,instruction,beforeText,feedbackId=''){
+  const row={id:uuid('rewrite'),chapterId:chapter.id,micheleFeedbackId:feedbackId,status:'queued',instruction,beforeText,afterText:'',changeSummary:'',createdAt:new Date().toISOString()};
+  if(pgPool) await dbQuery('insert into rewrite_jobs (id,chapter_id,michele_feedback_id,status,instruction,before_text,created_at) values ($1,$2,$3,$4,$5,$6,now())',[row.id,row.chapterId,feedbackId||null,row.status,row.instruction,row.beforeText]);
+  else{const store=valStore();nextStoreArray(store,'rewriteJobs').push(row);saveValStore(store);}
+  return row;
+}
+async function completeRewriteJob(job,{status='completed',afterText='',changeSummary='',errorMessage=''}={}){
+  if(pgPool) await dbQuery('update rewrite_jobs set status=$1,after_text=$2,change_summary=$3,error_message=$4,completed_at=now() where id=$5',[status,afterText,changeSummary,errorMessage,job.id]);
+  else{const store=valStore(),row=nextStoreArray(store,'rewriteJobs').find(j=>j.id===job.id);if(row)Object.assign(row,{status,afterText,changeSummary,errorMessage,completedAt:new Date().toISOString()});saveValStore(store);}
+}
+function normalizeRewriteJob(row){
+  if(!row) return null;
+  return {id:row.id,chapterId:row.chapter_id||row.chapterId,micheleFeedbackId:row.michele_feedback_id||row.micheleFeedbackId,status:row.status||'',instruction:row.instruction||'',beforeText:row.before_text||row.beforeText||'',afterText:row.after_text||row.afterText||'',changeSummary:row.change_summary||row.changeSummary||'',errorMessage:row.error_message||row.errorMessage||'',createdAt:row.created_at?row.created_at.toISOString?.()||row.created_at:row.createdAt||'',completedAt:row.completed_at?row.completed_at.toISOString?.()||row.completed_at:row.completedAt||''};
+}
+async function getRewriteJobById(id){
+  const jobId=String(id||'').trim();
+  if(!jobId) return null;
+  if(pgPool){const r=await dbQuery('select * from rewrite_jobs where id=$1 limit 1',[jobId]);return normalizeRewriteJob(r.rows[0]);}
+  return normalizeRewriteJob((valStore().rewriteJobs||[]).find(j=>j.id===jobId));
+}
+async function updateMicheleChapterText(chapter,afterText){
+  if(pgPool) await dbQuery('update book_chapters set current_text=$1,last_synced_at=now() where id=$2',[afterText,chapter.id]);
+  else{const store=valStore(),row=nextStoreArray(store,'bookChapters').find(c=>c.id===chapter.id);if(row){row.currentText=afterText;row.lastSyncedAt=new Date().toISOString();}saveValStore(store);}
+}
+function compactMicheleBullets(value){
+  const arr=Array.isArray(value)?value:String(value||'').split(/\n+/);
+  return arr.map(x=>String(x||'').replace(/^[-*•\d.\s]+/,'').replace(/\s+/g,' ').trim()).filter(Boolean).map(x=>x.length>210?x.slice(0,207).trim()+'…':x).slice(0,3);
+}
+function safeMicheleChapter(chapter){
+  if(!chapter) return null;
+  return {id:chapter.id,chapterNumber:chapter.chapterNumber,chapterTitle:sanitizeMicheleChapterTitle(chapter.chapterTitle,chapter.chapterNumber),status:chapter.status,lastSyncedAt:chapter.lastSyncedAt};
+}
+function micheleWordSignals(chapter,limit=5){
+  const title=String(chapter?.chapterTitle||chapter?.chapter_title||'');
+  const text=String(chapter?.currentText||'');
+  const stop=new Set('about after again all also and are because been before being between chapter could does every from have into just like more much only other over really should some that their there these they this through under very what when where which while with without would your you were was the then than its her she his him not but for'.split(' '));
+  const counts=new Map();
+  const titleWords=new Set(title.toLowerCase().match(/[a-z][a-z'-]{3,}/g)||[]);
+  for(const word of (title+' '+text).toLowerCase().match(/[a-z][a-z'-]{3,}/g)||[]){
+    const clean=word.replace(/^'+|'+$/g,'');
+    if(clean.length<4||stop.has(clean)) continue;
+    counts.set(clean,(counts.get(clean)||0)+(titleWords.has(clean)?8:1));
+  }
+  return [...counts.entries()].sort((a,b)=>b[1]-a[1]).slice(0,limit).map(([word])=>word);
+}
+function micheleChapterSpecificSignals(chapter,limit=8){
+  const text=String(chapter?.currentText||'').replace(/\s+/g,' ').trim();
+  const title=sanitizeMicheleChapterTitle(chapter?.chapterTitle||chapter?.chapter_title||'',chapter?.chapterNumber||chapter?.chapter_number);
+  const candidates=[];
+  (text.match(/[“"][^”"]{4,70}[”"]/g)||[]).forEach(q=>candidates.push(q.replace(/[“”"]/g,'').trim()));
+  const phrasePatterns=[
+    /\belite dating service\b/i,
+    /\bpolished website\b/i,
+    /\bglowing testimonials\b/i,
+    /\bprofessional matchmaker\b/i,
+    /\bresume of heartbreaks\b/i,
+    /\bgrown-up fairy tale\b/i,
+    /\bintake process\b/i,
+    /\bnoisy bars\b/i,
+    /\bwatered-down cocktails\b/i,
+    /\bmetaphorical\b[^.]{0,45}\bhorse\b/i,
+    /\bback of their\b[^.]{0,45}\bhorse\b/i,
+    /\bcommitment\b/i,
+    /\bsoulmates?\b/i
+  ];
+  phrasePatterns.forEach(re=>{const m=text.match(re);if(m)candidates.push(m[0]);});
+  const titleWords=title.toLowerCase().match(/[a-z][a-z'-]{3,}/g)||[];
+  if(titleWords.length)candidates.push(title);
+  micheleWordSignals(chapter,10).forEach(w=>candidates.push(w));
+  const out=[];
+  candidates.forEach(v=>{
+    const clean=String(v||'').replace(/\s+/g,' ').trim();
+    if(clean.length>=4&&!out.some(x=>x.toLowerCase()===clean.toLowerCase())) out.push(clean);
+  });
+  return out.slice(0,limit);
+}
+function micheleQuestionSafeSignal(value){
+  let text=String(value||'').replace(/[“”"]/g,'').replace(/\s+/g,' ').trim();
+  if(!text) return '';
+  if(/[.!?]/.test(text)){
+    const parts=text.split(/[.!?]/).map(p=>p.trim()).filter(Boolean);
+    text=parts.sort((a,b)=>b.length-a.length)[0]||text;
+  }
+  text=text.replace(/^(we|i|you|they)\s+/i,'').trim();
+  if(text.length>42) text=text.slice(0,42).replace(/\s+\S*$/,'').trim();
+  return text;
+}
+function micheleChapterEditorialSnapshot(chapter){
+  const label=micheleChapterLabel(chapter);
+  const text=String(chapter?.currentText||'').replace(/\s+/g,' ').trim();
+  const words=text.split(/\s+/).filter(Boolean).length;
+  const title=sanitizeMicheleChapterTitle(chapter?.chapterTitle||chapter?.chapter_title||'this chapter',chapter?.chapterNumber||chapter?.chapter_number);
+  const signals=micheleChapterSpecificSignals(chapter,8);
+  const main=signals[0]||title||'the central scene';
+  const second=signals[1]||signals[2]||'the emotional turn';
+  const questionMain=micheleQuestionSafeSignal(main)||'this moment';
+  const hasHumor=/\b(funny|laugh|shit|ridiculous|absurd|joke|trick|wild|you can.t make this|universe)\b/i.test(text+' '+title);
+  const hasBody=/\b(body|pain|knee|thigh|heart|breath|floor|ice|shoe|sneaker|scarf|doctor|hospital)\b/i.test(text+' '+title);
+  const hasSpiritual=/\b(god|universe|faith|miracle|spirit|perfectly timed|divine)\b/i.test(text+' '+title);
+  const hasDialogue=/["“”]/.test(text)||/\b(said|asked|told|called)\b/i.test(text);
+  const chapterSummary=`${label} is circling the promise of ${main}${second&&second!==main?` and the deeper ache underneath ${second}`:''}. The edit should keep the scene funny and specific while clarifying what Michele was really hoping would be solved.`;
+  const strengths=[
+    `The ${main} setup gives the reader a clear, memorable doorway into the chapter.`,
+    hasHumor?`Lines around ${second} give Michele room to be funny before the vulnerability appears.`:`The voice can stay conversational and self-aware without becoming over-polished.`,
+    hasDialogue?'The quoted language gives the scene texture and lets the reader hear the promise being sold.':`The chapter has a clear emotional thread VAL can deepen around ${second}.`
+  ];
+  const opportunities=[
+    hasDialogue?`Use the service’s own language, especially ${second}, to sharpen what Michele wanted to believe.`:`Add one or two grounded beats around ${main} so the reader can see the moment before reflection.`,
+    `Clarify the turn from ${main} to the private longing underneath it so the emotional meaning feels earned.`,
+    words>2500?'Break the revision into cleaner scene-to-reflection movements so the chapter does not feel overstuffed.':`Strengthen the transition from the fairy-tale promise into what Michele now understands.`
+  ];
+  const question=hasBody
+    ? `What did your body know in this moment before your mind caught up?`
+    : hasSpiritual
+      ? `Where should the reader feel the ${questionMain} mystery without being told what to believe?`
+      : `What did the promise of ${questionMain} make you want to believe was finally possible?`;
+  return {chapterSummary, strengths, opportunities, recommends:[
+    `Preserve Michele’s natural voice while making ${main} feel more immediate on the page.`,
+    `Layer humor, scene, emotional truth, reader understanding, and transitions together instead of choosing only one lane.`,
+    `Use Michele’s answer to sharpen the chapter’s emotional movement without over-polishing it.`
+  ], question};
+}
+function micheleChapterShortSummary(chapter){
+  return micheleChapterEditorialSnapshot(chapter).chapterSummary;
+}
+function micheleDefaultStrengths(chapter){
+  return micheleChapterEditorialSnapshot(chapter).strengths;
+}
+function micheleDefaultOpportunities(chapter){
+  return micheleChapterEditorialSnapshot(chapter).opportunities;
+}
+function micheleChapterSpecificQuestion(chapter){
+  return micheleNextFallbackQuestion(chapter,'',[]);
+}
+function micheleLayeredEditorialFrameworkText(){
+  return [
+    'Apply Michele’s editorial layering framework by default:',
+    '- Humor: disarm the reader and make the truth easier to receive.',
+    '- Scene Building: add sensory detail, physical movement, setting, dialogue, and grounding.',
+    '- Emotional Truth: clarify what was really happening underneath the event.',
+    '- Reader Understanding: make the insight clear without becoming preachy.',
+    '- Transitions: move naturally from story to reflection so the reader follows the lesson.'
+  ].join('\n');
+}
+function micheleChapterContextSummary(chapter){
+  const text=String(chapter?.currentText||'').replace(/\s+/g,' ').trim();
+  const title=String(chapter?.chapterTitle||chapter?.chapter_title||'this chapter').trim();
+  const words=text.split(/\s+/).filter(Boolean).length;
+  return `VAL has read “${title}”${words?` (${words} words)`:''}. Refer to the chapter briefly, then ask one useful question. Do not quote or read the manuscript aloud before the conversation begins.`;
+}
+function micheleInformedChapterQuestion(chapter,userMessage=''){
+  const msg=String(userMessage||'').toLowerCase();
+  const text=String(chapter?.currentText||'').toLowerCase();
+  if(/body|felt|feel|feeling|emotion|heart|truth/.test(msg)) return 'What did you know in your body before you were ready to admit it in your mind?';
+  if(/funny|humor|laugh|joke/.test(msg)) return 'What part of this scene should feel funny before it starts to hurt?';
+  if(/reader|lesson|understand|meaning/.test(msg)) return 'What does the reader need to understand here that you never understood then?';
+  if(/detail|scene|sensory|see|remember/.test(msg)||/floor|shoe|sneaker|scarf|ice|accident/.test(text)) return 'What detail from that moment still feels impossible to forget?';
+  return 'What is the one moment in this chapter that still has heat in it when you say it out loud?';
+}
+function withMicheleModelTimeout(promise,ms=4500){
+  return Promise.race([promise,new Promise((_,reject)=>setTimeout(()=>reject(new Error('Michele conversation model timeout')),ms))]);
+}
+function micheleChapterLabel(chapter){
+  if(!chapter) return 'this chapter';
+  const num=Number(chapter.chapterNumber??chapter.chapter_number);
+  const title=String(chapter.chapterTitle||chapter.chapter_title||chapter.title||'').trim();
+  if(num===0) return title&&title!=='Prologue'?`Prologue: ${title}`:'Prologue';
+  return `Chapter ${num}${title?`: ${title}`:''}`;
+}
+function micheleFindChapterForMessage(message,chapters=[],fallbackChapter=null){
+  const msg=String(message||'').toLowerCase();
+  const list=Array.isArray(chapters)?chapters:[];
+  if(/\bprologue\b/.test(msg)){
+    const prologue=list.find(ch=>Number(ch.chapterNumber??ch.chapter_number)===0||/\bprologue\b/i.test(String(ch.chapterTitle||ch.chapter_title||ch.googleDocSectionMarker||'')));
+    if(prologue) return prologue;
+  }
+  const m=msg.match(/\b(?:chapter|chap|ch)\s*#?\s*(\d+)\b/);
+  if(m){
+    const requested=Number(m[1]);
+    const found=list.find(ch=>Number(ch.chapterNumber??ch.chapter_number)===requested);
+    if(found) return found;
+  }
+  return fallbackChapter||list[0]||null;
+}
+function micheleEditorialMode(message,explicitMode=''){
+  const msg=String(message||'').toLowerCase();
+  if(/\b(proofread|spell|spelling|grammar|punctuation|typo|technical)\b/.test(msg)) return 'proofreading';
+  if(/\b(overview|summary|summarize|recap|what happens|key takeaways)\b/.test(msg)) return 'overview';
+  if(/\b(read|thoughts?|what do you think|your take|reaction|review|edit|editor|developmental|confusing|flow|arc|strengths|opportunities)\b/.test(msg)) return 'editor';
+  if(/\b(ask me|questions|question me|interview|voice conversation|draw out|pull out)\b/.test(msg)) return 'interview';
+  const mode=String(explicitMode||'').toLowerCase().trim();
+  if(['interview','editor','proofreading','proofread','overview'].includes(mode)) return mode==='proofread'?'proofreading':mode;
+  return 'interview';
+}
+function micheleModeSections(mode){
+  if(mode==='overview') return ['Summary','Major Events','Emotional Arc','Themes','Lessons','Key Takeaways'];
+  if(mode==='proofreading') return ['Spelling Errors','Grammar Issues','Punctuation Issues','Repetition','Awkward Phrasing','Suggested Corrections'];
+  if(mode==='interview') return ['Next Question'];
+  return ['Overview','Strengths','Opportunities','Emotional Impact','Reader Confusion Risks','Editorial Recommendations','Proofreading Notes'];
+}
+function sanitizeMicheleEditorReply(text){
+  let out=String(text||'').trim();
+  const banned=[
+    /^I hear you[.!]?\s*/i,
+    /^That makes sense[.!]?\s*/i,
+    /^Thank you for sharing[.!]?\s*/i,
+    /^That’s powerful[.!]?\s*/i,
+    /^That's powerful[.!]?\s*/i,
+    /^Let’s explore that[.!]?\s*/i,
+    /^Let's explore that[.!]?\s*/i,
+    /^I understand[.!]?\s*/i
+  ];
+  banned.forEach(re=>{out=out.replace(re,'');});
+  out=out
+    .replace(/^\s*Direction captured\s*/i,'')
+    .replace(/^\s*Use this as the rewrite direction:.*?(?=\n|$)/gim,'')
+    .replace(/^\s*Nothing has changed in the manuscript yet\.?\s*/gim,'')
+    .replace(/\n{3,}/g,'\n\n');
+  return out.trim();
+}
+function micheleChapterExcerpt(text,offset=0,len=260){
+  const clean=String(text||'').replace(/\s+/g,' ').trim();
+  if(!clean) return '';
+  const start=Math.max(0,Math.min(clean.length,offset));
+  const chunk=clean.slice(start,start+len);
+  return chunk.replace(/^\S{0,30}\s/,'').trim();
+}
+function micheleDeterministicChapterThoughts(chapter,userMessage=''){
+  const label=micheleChapterLabel(chapter);
+  const text=String(chapter?.currentText||'').replace(/\s+/g,' ').trim();
+  const asksProof=/proofread|spell|grammar|punctuation|typo/i.test(userMessage);
+  if(asksProof){
+    return `${label}\n\nProofreading notes\nI would preserve your conversational rhythm first, then clean only what distracts the reader: repeated filler, accidental tense shifts, punctuation that makes a sentence hard to follow, and any line breaks that chop up the joke or emotion.\n\nWhat I would not do\nI would not over-polish this into formal memoir voice. The power is in how spoken and alive it feels.\n\nNext useful question\nIs there any sentence in this chapter that still sounds like “writer voice” instead of you talking?`;
+  }
+  const lengthNote=text.length>9000?'There is enough material here that I would work in sections, not try to solve the whole chapter in one sweep.':'There is enough material here to make a meaningful pass without making you explain the whole story again.';
+  return `${label}\n\nMy thoughts\nThis chapter should not be treated like raw material anymore. It already has a living pulse. The job now is to make the reader feel guided through it without sanding off your humor, bite, or emotional edge.\n\nWhat is working\nThe chapter has lived-scene energy. I would keep the reader close to the physical moment first, then let the deeper meaning arrive after they are already inside it.\n\nWhere I would deepen it\nI would look for the places where the story moves quickly past the body-level truth: what you knew, what you ignored, what felt funny at the time, and what it cost later.\n\nThe editorial move\nLayer humor, scene, emotional truth, reader understanding, and transitions at the same time. The reader should laugh or lean in first, then realize the deeper truth has been landing the whole time.\n\nWhat I would watch\n${lengthNote}\n\nNext useful question\nWhat is the part of this chapter you most want the reader to still be thinking about after they close the book?`;
+}
+function micheleFastConversationReply(chapter,userMessage,{mode='interview',lastCompletedChapter=null,conversation=[]}={}){
+  const msg=String(userMessage||'').toLowerCase();
+  const label=micheleChapterLabel(chapter);
+  const lastLabel=lastCompletedChapter?micheleChapterLabel(lastCompletedChapter):'No chapter has been completed in this workflow yet';
+  const wantsAll=/all of (it|that|the above)|both|everything|combine|use them all/.test(msg);
+  const asksQuestions=/ask me|questions|question me|interview|walk me through|help me decide/.test(msg);
+  const asksNext=/what next|next chapter|work on next|which chapter|chapter transitions|transition/.test(msg);
+  const asksRead=/read|thoughts|overview|summary|review|proofread|spell|grammar/.test(msg);
+  const wantsWarm=/warm|gentle|soft|less advice|less teach|conversational|invite/.test(msg);
+  const wantsEmotion=/emotion|heart|vulnerab|deeper|feeling|honest/.test(msg);
+  const wantsStructure=/arc|structure|clear|sharpen|tight|focus|clean/.test(msg);
+  const wantsHumor=/funny|humor|joke|lighter|levity/.test(msg);
+  const unsure=/not sure|unsure|don't know|confused|stuck|maybe/.test(msg);
+  const ready=/ready|go ahead|rewrite|do it|yes|that feels right/.test(msg)&&!unsure;
+  if(mode==='overview'||(asksRead&&/overview|summary|thoughts|read/.test(msg))){
+    if(/thoughts|what do you think|your take|reaction|review|edit/.test(msg)){
+      return {
+        reply:micheleDeterministicChapterThoughts(chapter,userMessage),
+        readyToRewrite:false,
+        suggestedInstruction:`Use the editor's chapter thoughts for ${label}: preserve Michele’s voice while strengthening scene, emotional truth, reader clarity, humor, and transitions.`
+      };
+    }
+    return {
+      reply:`${label}\n\nOverview\nThis chapter is ready for a focused read. I can give you the story summary, emotional arc, themes, lessons, and places where the reader may need more grounding.\n\nNext question\nDo you want the overview to stay big-picture, or should I also point out where the chapter may need more scene, humor, or connective tissue?`,
+      readyToRewrite:false,
+      suggestedInstruction:`Review ${label} for story overview, emotional arc, reader clarity, and proofreading issues before rewriting.`
+    };
+  }
+  if(mode==='editor'||/thoughts|what do you think|your take|reaction|review|edit/.test(msg)){
+    return {
+      reply:micheleDeterministicChapterThoughts(chapter,userMessage),
+      readyToRewrite:false,
+      suggestedInstruction:`Use the editor's chapter thoughts for ${label}: preserve Michele’s voice while strengthening scene, emotional truth, reader clarity, humor, and transitions.`
+    };
+  }
+  if(mode==='proofreading'){
+    return {
+      reply:`${label}\n\nProofreading focus\nI will check spelling, grammar, punctuation, repetition, and awkward phrasing without flattening your voice.\n\nNext question\nDo you want me to preserve every intentionally conversational sentence, even if it bends formal grammar?`,
+      readyToRewrite:false,
+      suggestedInstruction:`Proofread ${label} for spelling, grammar, punctuation, repetition, and awkward phrasing while preserving Michele’s conversational memoir voice.`
+    };
+  }
+  let focus='layer humor, scene building, emotional truth, reader understanding, and transitions together while protecting Michele’s voice';
+  let question=micheleNextFallbackQuestion(chapter,userMessage,conversation);
+  if(wantsAll||wantsWarm||wantsEmotion||wantsStructure||wantsHumor){focus='apply all five editorial layers together: humor, scene building, emotional truth, reader understanding, and transitions';question=micheleNextFallbackQuestion(chapter,userMessage,conversation);}
+  else if(asksQuestions){focus='interview Michele from the actual chapter content, one useful question at a time, while applying all five editorial layers by default';question=micheleNextFallbackQuestion(chapter,userMessage,conversation);}
+  else if(asksNext){focus='help you choose the next editorial target from the current chapter context';question=`${lastLabel}. We are currently on ${label}. What part of the book do you want to work on next: this chapter, the next chapter, chapter transitions, voice consistency, emotional arc, humor/levity, or another thread?`;}
+  else if(unsure){focus='use the chapter itself to find the smallest useful next question without making Michele choose an editorial lane';question=micheleInformedChapterQuestion(chapter,userMessage);}
+  return {
+    reply:asksNext?question:question,
+    readyToRewrite:ready,
+    suggestedInstruction:`Rewrite ${label} to ${focus}. Preserve Michele’s memoir voice, humor, directness, and factual sequence. Do not sound generic or overly polished.`
+  };
+}
+function micheleFallbackQuestionBank(chapter,userMessage=''){
+  const text=String(chapter?.currentText||'').toLowerCase();
+  const title=String(chapter?.chapterTitle||chapter?.chapter_title||'').toLowerCase();
+  const num=Number(chapter?.chapterNumber??chapter?.chapter_number);
+  const msg=String(userMessage||'').toLowerCase();
+  let bank=[
+    'What detail from that moment still feels impossible to forget?',
+    'What did you know in your body before you were ready to admit it in your mind?',
+    'What part of this scene should feel funny before it starts to hurt?',
+    'What does the reader need to understand here that you never understood then?',
+    'Where does this chapter need more of your real voice, not the cleaned-up version?',
+    'What sentence or moment in this chapter still feels too polite?',
+    'What happened right before this scene that would help the reader feel more grounded?',
+    'What happened right after this moment that the reader needs to feel the cost of it?',
+    'What is the line you would say out loud to a friend if you were telling this story over coffee?'
+  ];
+  const chapterSpecific=[];
+  if(num===0||/\bprologue\b/.test(title)) chapterSpecific.push('What promise should the prologue make to the reader about the kind of story they are entering?');
+  if(/sneaker|shoe|universe|trick/.test(title+text)) chapterSpecific.push('What tiny physical detail from that moment makes the whole thing feel real again?');
+  if(/scarf|ice|accident/.test(title+text)) chapterSpecific.push('Where should the reader first feel that something is off, even before you say it plainly?');
+  if(/mother|mom|father|dad|family|child|girl/.test(title+text)) chapterSpecific.push('What did younger you need someone in that scene to understand?');
+  if(/hospital|doctor|body|pain|sick|diagnos|surgery/.test(title+text)) chapterSpecific.push('What did your body understand before the room caught up?');
+  if(/love|date|marriage|husband|boyfriend|relationship/.test(title+text)) chapterSpecific.push('What part of the relationship should feel charming before the truth underneath it appears?');
+  if(/god|universe|faith|miracle|spirit/.test(title+text)) chapterSpecific.push('Where should the reader feel the mystery without being told what to believe?');
+  if(chapterSpecific.length){
+    const seed=Math.abs(String(title||num||text.slice(0,40)).split('').reduce((sum,ch)=>sum+ch.charCodeAt(0),0));
+    const rotated=chapterSpecific.slice(seed%chapterSpecific.length).concat(chapterSpecific.slice(0,seed%chapterSpecific.length));
+    bank=rotated.concat(bank);
+  }else{
+    const seed=Math.abs(String(title||num||text.slice(0,40)).split('').reduce((sum,ch)=>sum+ch.charCodeAt(0),0));
+    bank=bank.slice(seed%bank.length).concat(bank.slice(0,seed%bank.length));
+  }
+  if(/body|felt|feel|feeling|emotion|heart|truth/.test(msg)) return [bank[1],bank[4],bank[7],...bank];
+  if(/funny|humor|laugh|joke/.test(msg)) return [bank[2],bank[8],bank[5],...bank];
+  if(/reader|lesson|understand|meaning/.test(msg)) return [bank[3],bank[7],bank[0],...bank];
+  if(/detail|scene|sensory|see|remember/.test(msg)||/floor|shoe|sneaker|scarf|ice|accident|universe/.test(text)) return [bank[0],bank[6],bank[1],...bank];
+  return bank;
+}
+function micheleNextFallbackQuestion(chapter,userMessage='',conversation=[]){
+  const used=(Array.isArray(conversation)?conversation:[])
+    .map(t=>String(t?.content||'').replace(/\s+/g,' ').trim().toLowerCase())
+    .filter(Boolean);
+  const questions=micheleFallbackQuestionBank(chapter,userMessage);
+  return questions.find(q=>!used.some(u=>u.includes(q.toLowerCase()))) || 'What is the next thing this chapter needs to tell the truth more cleanly?';
+}
+function micheleMessageRequestsEditorialAnswer(message=''){
+  return /\b(read|thoughts?|what do you think|your take|reaction|overview|summary|summarize|review|proofread|spell|grammar|edit|editor|developmental|confusing|flow|arc|strengths|opportunities|what next|next chapter|work on next|which chapter|chapter transitions|transition)\b/i.test(String(message||''));
+}
+function micheleConversationTextLooksLikeManuscript(reply,chapter){
+  const clean=String(reply||'').replace(/\s+/g,' ').trim();
+  if(clean.length>1800) return true;
+  const chapterText=String(chapter?.currentText||'').replace(/\s+/g,' ').trim();
+  if(!chapterText||clean.length<500) return false;
+  const sample=clean.slice(0,260);
+  return sample.length>120&&chapterText.includes(sample);
+}
+function micheleSummaryFieldUnsafe(value,chapter){
+  const text=String(Array.isArray(value)?value.join(' '):value||'').replace(/\s+/g,' ').trim();
+  if(!text) return true;
+  if(text.length>700) return true;
+  if(micheleConversationTextLooksLikeManuscript(text,chapter)) return true;
+  const chapterText=String(chapter?.currentText||'').replace(/\s+/g,' ').trim();
+  if(chapterText&&text.length>80&&chapterText.includes(text.slice(0,80))) return true;
+  return false;
+}
+function micheleBulletsAreSpecific(items,chapter){
+  const list=compactMicheleBullets(items);
+  if(list.length!==3) return false;
+  const signals=micheleChapterSpecificSignals(chapter,10).map(s=>String(s).toLowerCase());
+  const joined=list.join(' ').toLowerCase();
+  const generic=/\b(story material|emotional truth|reader understanding|scene building|transitions|voice|meaning|body-level|body moment|physical details|concrete anchor)\b/g;
+  const genericHits=(joined.match(generic)||[]).length;
+  const signalHits=signals.filter(s=>s&&joined.includes(s)).length;
+  return signalHits>0 && genericHits<5;
+}
+function micheleReplyRepeatsPriorQuestion(reply,conversation=[]){
+  const clean=String(reply||'').replace(/\s+/g,' ').trim().toLowerCase();
+  if(!clean) return false;
+  return (Array.isArray(conversation)?conversation:[])
+    .filter(t=>t&&t.role==='assistant')
+    .map(t=>String(t.content||'').replace(/\s+/g,' ').trim().toLowerCase())
+    .some(prev=>prev && (prev===clean || prev.includes(clean) || clean.includes(prev)));
+}
+function micheleConversationTurns(conversation=[]){
+  return (Array.isArray(conversation)?conversation:[])
+    .filter(t=>t&&['user','assistant'].includes(t.role)&&String(t.content||'').trim())
+    .filter(t=>!/Reading the chapter/i.test(String(t.content||'')))
+    .slice(-10)
+    .map(t=>({role:t.role,content:String(t.content||'').slice(0,1200)}));
+}
+function micheleVoiceSizedReply(text){
+  const clean=String(text||'').replace(/\s+/g,' ').trim();
+  if(clean.length<=360) return clean;
+  const sentences=clean.match(/[^.!?]+[.!?]+/g)||[];
+  return (sentences.slice(0,2).join(' ')||clean.slice(0,340)).trim();
+}
+async function micheleConversationReply({chapter,userMessage,conversation,lastCompletedChapter=null,mode='interview',notes=[],voiceProfile=null,voiceMode=false}){
+  const selectedMode=micheleEditorialMode(userMessage,mode);
+  const fallback=micheleFastConversationReply(chapter,userMessage,{mode:selectedMode,lastCompletedChapter,conversation});
+  if(selectedMode==='interview'&&!micheleMessageRequestsEditorialAnswer(userMessage)){
+    const question=micheleNextFallbackQuestion(chapter,userMessage,conversation);
+    return {
+      reply:question,
+      readyToRewrite:false,
+      suggestedInstruction:`Michele answered: ${String(userMessage||'').trim()}. Use this answer as rewrite direction for ${micheleChapterLabel(chapter)} while preserving her voice and applying humor, scene, emotional truth, reader clarity, and transitions together.`,
+      mode:selectedMode
+    };
+  }
+  try{
+    const raw=await withMicheleModelTimeout(callValModel({json:true,temperature:selectedMode==='interview'?0.55:0.28,maxTokens:selectedMode==='interview'?1100:2200,system:[
+      VAL_SYSTEM_PROMPT,
+      'You are Michele Julian’s manuscript editor and conversational writing partner inside VAL.',
+      'You are speaking directly to Michele. Michele is the author. Use “you,” never “Michele may want.”',
+      'Do the requested task immediately. If Michele says “Read Chapter 2 and give me your thoughts,” read the supplied Chapter 2 text and give real editorial thoughts.',
+      'Do not repeat instructions back. Do not say you would use something as a direction. Do the work.',
+      'Banned openings and filler: “I hear you,” “That makes sense,” “Thank you for sharing,” “That’s powerful,” “Let’s explore that,” “I would use,” “I understand.”',
+      'Protect Michele’s funny, warm, heart-wrenching, irreverent, embodied memoir voice. Keep readers inside the lived story and out of their heads unless reflection is intentionally prompted.',
+      micheleLayeredEditorialFrameworkText(),
+      'Do not ask Michele to choose between humor, scene building, emotional truth, transitions, and reader takeaway. Assume every strong chapter needs all of them layered together.',
+      'Before asking Michele a question, use the selected chapter content. Do not ask a question already answered by the chapter.',
+      'If mode is Interview, ask one strong chapter-specific question at a time. No list of homework. Voice-first, conversational.',
+      'In Interview mode, reply with ONLY the next question or a very short chapter-choice question. Do not include chapter labels, status updates, “Direction captured,” “Use this as the rewrite direction,” or “Nothing has changed.”',
+      'Never return rewritten manuscript prose in this conversation route. Rewriting happens only through the separate write-chapter action.',
+      'If mode is Editor, return sections: Overview, Strengths, Opportunities, Emotional Impact, Reader Confusion Risks, Editorial Recommendations, Proofreading Notes.',
+      'If mode is Proofreading, return sections: Spelling Errors, Grammar Issues, Punctuation Issues, Repetition, Awkward Phrasing, Suggested Corrections.',
+      'If mode is Overview, return sections: Summary, Major Events, Emotional Arc, Themes, Lessons, Key Takeaways. Do not give editing suggestions unless Michele asked for thoughts or edits.',
+      'Whenever you analyze a chapter in Editor mode, include proofreading notes after developmental feedback.',
+      'If Michele asks what is next, tell her the last completed chapter when available, name the currently selected chapter, and ask whether she wants next chapter, chapter transitions, voice consistency, emotional arc, humor/levity, or something else.',
+      'Never imply the manuscript changed during chat. It only changes after Michele approves a revision draft for the fresh manuscript.',
+      'Return strict JSON with keys reply, readyToRewrite, suggestedInstruction.',
+      'reply should be specific and useful. For overview/editor/proofreading requests, answer with enough substance to be helpful.',
+      'suggestedInstruction should be an actionable rewrite instruction that accumulates Michele’s direction.'
+    ].join('\n'),user:JSON.stringify({
+      mode:selectedMode,
+      requiredSections:micheleModeSections(selectedMode),
+      internalChapterContextSummary:micheleChapterContextSummary(chapter),
+      currentChapter:{label:micheleChapterLabel(chapter),chapterNumber:chapter.chapterNumber,chapterTitle:chapter.chapterTitle,fullText:String(chapter.currentText||'').slice(0,16000)},
+      lastCompletedChapter:lastCompletedChapter?{chapterNumber:lastCompletedChapter.chapterNumber,chapterTitle:lastCompletedChapter.chapterTitle}:null,
+      micheleMessage:userMessage,
+      conversation:micheleConversationTurns(conversation),
+      editorNotes:(notes||[]).map(n=>String(n.note_text||n.noteText||'').slice(0,2500)).slice(0,4),
+      authorVoiceProfile:voiceProfile||null
+    })}),selectedMode==='interview'?10000:18000);
+    const parsed=JSON.parse(raw);
+    let reply=sanitizeMicheleEditorReply(parsed.reply||'');
+    if(micheleReplyRepeatsPriorQuestion(reply,conversation)){
+      reply=micheleNextFallbackQuestion(chapter,userMessage,conversation);
+    }
+    if(micheleConversationTextLooksLikeManuscript(reply,chapter)){
+      reply=micheleNextFallbackQuestion(chapter,userMessage,conversation);
+    }
+    if(!reply) return fallback;
+    return {
+      reply:voiceMode?micheleVoiceSizedReply(reply):reply,
+      readyToRewrite:!!parsed.readyToRewrite,
+      suggestedInstruction:String(parsed.suggestedInstruction||fallback.suggestedInstruction||userMessage).trim(),
+      mode:selectedMode
+    };
+  }catch(e){
+    return fallback;
+  }
+}
+async function micheleGentleSummary({chapter,notes,voiceProfile}){
+  const fallback=micheleChapterEditorialSnapshot(chapter);
+  try{
+    const raw=await callValModel({json:true,temperature:0.25,maxTokens:1100,system:[VAL_SYSTEM_PROMPT,[
+      'Return strict JSON only with keys chapterSummary, strengths, opportunities, recommends, question.',
+      'This is Michele’s calm book companion. It should feel emotionally intelligent, specific, and useful — not generic.',
+      'chapterSummary must be 1-2 short sentences, under 45 words. Do not quote the manuscript. Do not include full paragraphs from the chapter.',
+      'strengths must contain exactly 3 bullets, each 8-24 words, naming what is already working.',
+      'opportunities must contain exactly 3 bullets, each 8-24 words, naming what could be improved.',
+      'recommends must contain 2-3 concrete rewrite directions, each 18-40 words, focused on applying humor, scene building, emotional truth, reader understanding, and transitions together.',
+      'question must be one specific, easy-to-answer question tied to this chapter. Do not use the vague phrase "What feels right to you?" by itself.',
+      'question must be 8-28 words. It must not quote manuscript text. It must not summarize or read the chapter aloud.',
+      'Never return the whole chapter text in any field. Never quote more than 10 words from the chapter.',
+      'For voice startup, do not begin by reading the chapter. Say only one intuitive question.',
+      'Do not ask Michele to choose between humor, sensory scene building, emotional truth, transitions, or reader takeaway. Assume the chapter needs all of them.',
+      'Ask one informed question from the actual chapter content. Do not ask Michele to explain what the chapter already says.',
+      'Do not overwhelm Michele. Do not give homework. Do not merely suggest; prepare for VAL to rewrite after Michele answers.',
+      micheleLayeredEditorialFrameworkText(),
+      'If Master Edits 1 notes are present, weave in the most applicable point without naming a long process.'
+    ].join('\n')].join('\n'),user:[
+      `Chapter: ${chapter.chapterTitle}`,
+      `Safe chapter signals: ${micheleWordSignals(chapter,10).join(', ')}`,
+      `Structural context: ${micheleChapterContextSummary(chapter)}`,
+      notes.length?`Editor notes:\n${notes.map(n=>n.note_text||n.noteText).join('\n')}`:'',
+      voiceProfile?`Author voice profile:\n${JSON.stringify(voiceProfile).slice(0,3000)}`:''
+    ].filter(Boolean).join('\n\n')});
+    const parsed=JSON.parse(raw);
+    const question=String(parsed.question||'').trim();
+    const chapterSummary=String(parsed.chapterSummary||'').replace(/\s+/g,' ').trim();
+    const strengths=compactMicheleBullets(parsed.strengths);
+    const opportunities=compactMicheleBullets(parsed.opportunities);
+    return {
+      chapterSummary:!micheleSummaryFieldUnsafe(chapterSummary,chapter)?chapterSummary:fallback.chapterSummary,
+      strengths:micheleBulletsAreSpecific(strengths,chapter)?strengths:fallback.strengths,
+      opportunities:micheleBulletsAreSpecific(opportunities,chapter)?opportunities:fallback.opportunities,
+      recommends:compactMicheleBullets(parsed.recommends),
+      question:/what feels right to you\??$/i.test(question)||micheleSummaryFieldUnsafe(question,chapter)?fallback.question:(question||fallback.question)
+    };
+  }catch(e){return fallback;}
+}
+async function rewriteMicheleChapter({chapter,response,notes,voiceProfile}){
+  const chunks=splitChapterText(chapter.currentText||'',16000);
+  const rewritten=[];
+  const profileText=voiceProfile?JSON.stringify(voiceProfile).slice(0,7000):'No saved voice profile yet. Infer gently from the chapter and Michele response.';
+  const noteText=notes.map(n=>`- ${n.note_type||n.noteType||'note'}: ${n.note_text||n.noteText}`).join('\n');
+  for(let i=0;i<chunks.length;i++){
+    const user=[
+      `Chapter: Chapter #${chapter.chapterNumber}: ${chapter.chapterTitle}`,
+      `Michele response/instruction: ${response}`,
+      noteText?`Current editor notes:\n${noteText}`:'',
+      `Author Voice Profile:\n${profileText}`,
+      micheleLayeredEditorialFrameworkText(),
+      `Rewrite section ${i+1} of ${chunks.length}. Apply Michele's instruction. Apply all five editorial layers together by default; do not make this a single-lane edit. Apply Master Edits 1 point by point where applicable. Preserve her voice over generic polish. Keep factual sequence. Do not summarize. Return only rewritten prose.`,
+      chunks[i]
+    ].filter(Boolean).join('\n\n');
+    rewritten.push((await callValModel({system:[VAL_SYSTEM_PROMPT,'You are Michele VAL, a calm memoir co-editor. You apply the author response and Master Edits 1 by rewriting the supplied chapter text. Preserve Michele’s funny, emotionally sharp, embodied memoir voice. Layer humor, scene building, emotional truth, reader understanding, and transitions together. Do not give suggestions. Do not explain. Return only the rewritten chapter body.'].join('\n'),user,maxTokens:6500,temperature:0.45})).trim());
+  }
+  const afterText=rewritten.filter(Boolean).join('\n\n').trim();
+  if(!afterText) throw new Error('Rewrite returned no text.');
+  const changeSummary=await callValModel({system:'Summarize the rewrite in one calm sentence for internal/admin use only.',user:`Instruction: ${response}\n\nBefore excerpt:\n${chapter.currentText.slice(0,1500)}\n\nAfter excerpt:\n${afterText.slice(0,1500)}`,maxTokens:160,temperature:0.2}).catch(()=>`Applied Michele's response to Chapter ${chapter.chapterNumber}.`);
+  return {afterText,changeSummary};
+}
+async function refreshMicheleReadingCopy(project){
+  const readingId=bookProjectReadingDocId(project);
+  if(!readingId) return null;
+  const masterDoc=await readGoogleDocRaw(bookProjectMasterDocId(project));
+  const cleanText=googleDocTextFromStructuralElements(googleDocStructuralElements(masterDoc)).trim();
+  return updateGoogleDoc({documentId:readingId,content:cleanText,mode:'replace'});
+}
+function micheleManuscriptTextWithReplacement(chapters,chapterId,replacementText){
+  return (chapters||[]).map(ch=>{
+    const heading=String(ch.googleDocSectionMarker||`Chapter #${ch.chapterNumber}: ${ch.chapterTitle||''}`).trim();
+    const body=String(ch.id===chapterId?replacementText:(ch.currentText||'')).trim();
+    return `${heading}\n\n${body}`.trim();
+  }).filter(Boolean).join('\n\n\n');
+}
+function micheleWordCount(text){
+  return String(text||'').trim().split(/\s+/).filter(Boolean).length;
+}
+function micheleIsEmptyDocText(text){
+  return micheleWordCount(text)<8;
+}
+function micheleChapterHeadingText(chapter){
+  if(Number(chapter?.chapterNumber)===0){
+    const marker=String(chapter.googleDocSectionMarker||'').trim();
+    if(marker) return marker;
+    const title=String(chapter.chapterTitle||'Prologue').trim();
+    return title&&title!=='Prologue'?`Prologue: ${title}`:'Prologue';
+  }
+  return String(chapter?.googleDocSectionMarker||`Chapter #${chapter?.chapterNumber}: ${chapter?.chapterTitle||''}`).trim();
+}
+function normalizeMicheleVerificationText(value){
+  return String(value||'')
+    .replace(/\u00a0/g,' ')
+    .replace(/[“”]/g,'"')
+    .replace(/[‘’]/g,"'")
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function micheleOutputHeadingCandidates(chapter){
+  const num=Number(chapter?.chapterNumber);
+  const title=String(chapter?.chapterTitle||chapter?.chapter_title||'').trim();
+  const marker=String(chapter?.googleDocSectionMarker||chapter?.google_doc_section_marker||'').trim();
+  const candidates=[
+    micheleChapterHeadingText(chapter),
+    marker,
+    num===0?'Prologue':'',
+    num===0&&title&&title!=='Prologue'?`Prologue: ${title}`:'',
+    Number.isFinite(num)&&num>0?`Chapter #${num}${title?`: ${title}`:''}`:'',
+    Number.isFinite(num)&&num>0?`Chapter ${num}${title?`: ${title}`:''}`:''
+  ];
+  return [...new Set(candidates.map(normalizeMicheleVerificationText).filter(Boolean))];
+}
+function micheleForbiddenManuscriptContent(text){
+  const body=String(text||'');
+  return /^\s*(Michele|VAL|Assistant|User)\s*:/m.test(body)
+    || /\b(Overview|Strengths|Opportunities|Reader Confusion Risks|Editorial Recommendations|Proofreading Notes|Spelling Errors|Grammar Issues|Suggested Corrections)\b/.test(body.slice(0,2500));
+}
+function findMicheleOutputChapter(readingChapters,chapter){
+  const number=Number(chapter?.chapterNumber);
+  const marker=String(chapter?.googleDocSectionMarker||'').replace(/\s+/g,' ').trim().toLowerCase();
+  const matches=(readingChapters||[]).filter(ch=>{
+    const chNum=Number(ch.chapterNumber);
+    const chMarker=String(ch.googleDocSectionMarker||'').replace(/\s+/g,' ').trim().toLowerCase();
+    return chNum===number || (marker&&chMarker===marker);
+  });
+  return {match:matches[0]||null,count:matches.length};
+}
+function michelePlacementRequiredResult(chapter,docText){
+  return {
+    ok:false,
+    placementRequired:true,
+    gentleMessage:`I don’t see ${micheleChapterLabel(chapter)} in the fresh manuscript yet. Where should I place it?`,
+    chapter:{id:chapter.id,chapterNumber:chapter.chapterNumber,chapterTitle:chapter.chapterTitle},
+    placements:[
+      {id:'beginning',label:'Place at beginning'},
+      {id:'end',label:'Place at end'}
+    ],
+    currentDocWords:micheleWordCount(docText)
+  };
+}
+async function micheleOutputPlacementPreflight({project,chapter,placement=''}){
+  const readingId=bookProjectReadingDocId(project);
+  const masterId=bookProjectMasterDocId(project);
+  if(!readingId) throw new Error('MICHELE_READING_COPY_DOC_ID is required. Refusing to edit the original source manuscript.');
+  if(readingId===masterId) throw new Error('Reading/output doc matches the source manuscript. Refusing to edit the original source manuscript.');
+  const doc=await readGoogleDocRaw(readingId);
+  const docText=googleDocExtractedText(doc);
+  const readingChapters=parseMicheleDocChapters(doc);
+  const located=findMicheleOutputChapter(readingChapters,chapter);
+  if(located.count>1) throw new Error('This edit would greatly increase the document length. I’m stopping this so the manuscript is not accidentally duplicated.');
+  if(!located.match&&!micheleIsEmptyDocText(docText)&&!['beginning','end'].includes(String(placement||''))){
+    return michelePlacementRequiredResult(chapter,docText);
+  }
+  return {ok:true,readingId,located,currentDocWords:micheleWordCount(docText)};
+}
+async function replaceMicheleOutputChapterOnly({documentId,chapter,fullText,placement=''}){
+  const doc=await readGoogleDocRaw(documentId);
+  const docText=googleDocExtractedText(doc);
+  const currentDocWords=micheleWordCount(docText);
+  const clean=String(fullText||'').replace(/\r\n/g,'\n').trim();
+  if(!clean) throw new Error('Rewrite returned empty chapter text.');
+  if(micheleForbiddenManuscriptContent(clean)) throw new Error('This looks like notes or a chat transcript, not clean manuscript text. I saved nothing to the manuscript document.');
+  const proposedWords=micheleWordCount(clean);
+  const readingChapters=parseMicheleDocChapters(doc);
+  const located=findMicheleOutputChapter(readingChapters,chapter);
+  if(located.count>1) throw new Error('This edit would greatly increase the document length. I’m stopping this so the manuscript is not accidentally duplicated.');
+  let requests=[],previousChapterText='',expectedWords=proposedWords,writeMode='initialize_chapter';
+  if(located.match){
+    previousChapterText=located.match.currentText||'';
+    const previousWords=micheleWordCount(previousChapterText);
+    expectedWords=Math.max(0,currentDocWords-previousWords+proposedWords);
+    await saveChapterVersionText(chapter,previousChapterText,`Fresh Google Doc snapshot before write. Previous words: ${previousWords}. Edited words: ${proposedWords}.`,'before_fresh_doc_write');
+    const start=Number(located.match.bodyStartIndex),end=Number(located.match.endIndex);
+    if(end>start) requests.push({deleteContentRange:{range:{startIndex:start,endIndex:end}}});
+    requests.push({insertText:{location:{index:start},text:clean+'\n'}});
+    writeMode='replace_chapter_section';
+  }else{
+    if(!micheleIsEmptyDocText(docText)&&!['beginning','end'].includes(String(placement||''))) throw new Error('Selected chapter was not found in the fresh manuscript document. I need to know where to place it.');
+    const heading=micheleChapterHeadingText(chapter);
+    expectedWords=currentDocWords+proposedWords+micheleWordCount(heading);
+    await saveChapterVersionText(chapter,'',`Fresh Google Doc snapshot before first chapter insert. Previous words: ${currentDocWords}. Edited words: ${proposedWords}.`,'before_fresh_doc_insert');
+    const insertIndex=String(placement||'beginning')==='end'?googleDocEndIndex(doc):1;
+    requests=[{insertText:{location:{index:insertIndex},text:`${insertIndex>1?'\n\n':''}${heading}\n\n${clean}\n`}}];
+    writeMode=micheleIsEmptyDocText(docText)?'initialize_chapter':`insert_chapter_${placement}`;
+  }
+  if(currentDocWords>0&&expectedWords>currentDocWords*1.25&&!['beginning','end'].includes(String(placement||''))){
+    throw new Error('This edit would greatly increase the document length. I’m stopping this so the manuscript is not accidentally duplicated.');
+  }
+  await googleDocsBatchUpdate(documentId,requests);
+  return {mode:writeMode,currentDocWords,previousChapterWords:micheleWordCount(previousChapterText),editedChapterWords:proposedWords,expectedDocWords:expectedWords};
+}
+async function verifyMicheleOutputWrite({documentId,chapter,fullText}){
+  const headingCandidates=micheleOutputHeadingCandidates(chapter);
+  const sample=normalizeMicheleVerificationText(fullText).slice(0,120);
+  let lastDoc=null,lastHeadingFound=false,lastSampleFound=false;
+  for(let attempt=0;attempt<3;attempt++){
+    const doc=await readGoogleDocRaw(documentId);
+    lastDoc=doc;
+    const outputText=googleDocExtractedText(doc);
+    const haystack=normalizeMicheleVerificationText(outputText);
+    lastHeadingFound=headingCandidates.some(heading=>heading&&haystack.includes(heading));
+    lastSampleFound=!sample || haystack.includes(sample);
+    if(lastHeadingFound&&lastSampleFound){
+      return {title:doc.title||'Fresh manuscript output',textLength:outputText.length,headingVerified:true,contentVerified:true};
+    }
+    await new Promise(resolve=>setTimeout(resolve,400*(attempt+1)));
+  }
+  if(!lastHeadingFound || !lastSampleFound){
+    throw new Error(`The rewritten chapter was not confirmed in the fresh output document. Original manuscript was not edited. Verification details: heading ${lastHeadingFound?'found':'missing'}, content sample ${lastSampleFound?'found':'missing'}.`);
+  }
+  return {title:lastDoc?.title||'Fresh manuscript output',textLength:googleDocExtractedText(lastDoc).length};
+}
+async function writeMicheleChapterResult({synced,chapter,fullText,placement=''}){
+  const readingId=bookProjectReadingDocId(synced.project);
+  const masterId=bookProjectMasterDocId(synced.project);
+  if(!readingId) throw new Error('MICHELE_READING_COPY_DOC_ID is required. Refusing to edit the original source manuscript.');
+  if(readingId===masterId) throw new Error('Reading/output doc matches the source manuscript. Refusing to edit the original source manuscript.');
+  const guardedWrite=await replaceMicheleOutputChapterOnly({documentId:readingId,chapter,fullText,placement});
+  const formatting=await formatGoogleDocForManuscript(readingId);
+  const verified=await verifyMicheleOutputWrite({documentId:readingId,chapter,fullText});
+  return {id:readingId,title:verified.title||'Fresh manuscript output',url:googleDocUrl(readingId),mode:guardedWrite.mode,guardedWrite,formatting,verified,sourceDocId:masterId,originalManuscriptEdited:false};
+}
+async function updateMicheleVoiceProfile({projectId,response,chapter,beforeText,afterText}){
+  const existing=await getMicheleVoiceProfile(projectId);
+  let parsed=null;
+  try{
+    const raw=await callValModel({json:true,temperature:0.2,maxTokens:900,system:'Update an author voice profile. Return strict JSON keys: voiceSummary, preferredStyle, avoidStyle, favoritePhrases, rejectedPhrases, acceptedPatterns, rejectedPatterns. Arrays only for list fields.',user:`Existing profile:\n${JSON.stringify(existing||{})}\n\nMichele response:\n${response}\n\nChapter: ${chapter.chapterTitle}\n\nBefore excerpt:\n${beforeText.slice(0,1800)}\n\nAfter excerpt:\n${afterText.slice(0,1800)}`});
+    parsed=JSON.parse(raw);
+  }catch(e){parsed={voiceSummary:existing?.voice_summary||existing?.voiceSummary||'Preserve Michele’s memoir voice, emotional honesty, humor, and grounded spirituality.',preferredStyle:[response],avoidStyle:[],favoritePhrases:[],rejectedPhrases:[],acceptedPatterns:['Applied direct Michele feedback'],rejectedPatterns:[]};}
+  if(pgPool){
+    const id=existing?.id||uuid('voice');
+    if(existing) await dbQuery('update author_voice_profile set voice_summary=$1,preferred_style=$2,avoid_style=$3,favorite_phrases=$4,rejected_phrases=$5,accepted_patterns=$6,rejected_patterns=$7,updated_at=now() where id=$8',[parsed.voiceSummary||parsed.voice_summary||'',JSON.stringify(jsonArrayField(parsed.preferredStyle)),JSON.stringify(jsonArrayField(parsed.avoidStyle)),JSON.stringify(jsonArrayField(parsed.favoritePhrases)),JSON.stringify(jsonArrayField(parsed.rejectedPhrases)),JSON.stringify(jsonArrayField(parsed.acceptedPatterns)),JSON.stringify(jsonArrayField(parsed.rejectedPatterns)),id]);
+    else await dbQuery('insert into author_voice_profile (id,book_project_id,voice_summary,preferred_style,avoid_style,favorite_phrases,rejected_phrases,accepted_patterns,rejected_patterns,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())',[id,projectId,parsed.voiceSummary||'',JSON.stringify(jsonArrayField(parsed.preferredStyle)),JSON.stringify(jsonArrayField(parsed.avoidStyle)),JSON.stringify(jsonArrayField(parsed.favoritePhrases)),JSON.stringify(jsonArrayField(parsed.rejectedPhrases)),JSON.stringify(jsonArrayField(parsed.acceptedPatterns)),JSON.stringify(jsonArrayField(parsed.rejectedPatterns))]);
+    return;
+  }
+  const store=valStore(),rows=nextStoreArray(store,'authorVoiceProfiles');let row=rows.find(p=>p.bookProjectId===projectId);if(!row){row={id:uuid('voice'),bookProjectId:projectId};rows.push(row);}Object.assign(row,{voiceSummary:parsed.voiceSummary||'',preferredStyle:jsonArrayField(parsed.preferredStyle),avoidStyle:jsonArrayField(parsed.avoidStyle),favoritePhrases:jsonArrayField(parsed.favoritePhrases),rejectedPhrases:jsonArrayField(parsed.rejectedPhrases),acceptedPatterns:jsonArrayField(parsed.acceptedPatterns),rejectedPatterns:jsonArrayField(parsed.rejectedPatterns),updatedAt:new Date().toISOString()});saveValStore(store);
+}
+async function micheleBookContinueState(){
+  const synced=await syncMicheleBookFromDocs();
+  const projectId=bookProjectId(synced.project);
+  const chapter=await getMicheleCurrentChapter(synced.project,synced.chapters);
+  if(!chapter) throw new Error('No current chapter found.');
+  const lastCompleted=await latestMicheleCompletedChapter(synced.project,synced.chapters);
+  const [notes,voiceProfile]=await Promise.all([listMicheleEditorNotes(chapter.id,chapter),getMicheleVoiceProfile(projectId)]);
+  const gentle=await micheleGentleSummary({chapter,notes,voiceProfile});
+  const session=await getOrCreateMicheleBookSession({project:synced.project,chapter,mode:'interview'});
+  const turns=await listMicheleBookSessionTurns(session.id,16);
+  return {ok:true,project:{id:projectId,title:synced.project.title||synced.project.title,masterDocId:bookProjectMasterDocId(synced.project),readingCopyDocId:bookProjectReadingDocId(synced.project)},chapter:safeMicheleChapter(chapter),lastCompletedChapter:lastCompleted?safeMicheleChapter(lastCompleted):null,chapters:synced.chapters.map(safeMicheleChapter),summary:gentle,question:'What would you like to work on next?',session:publicBookConversationSession(session,turns)};
+}
+async function getMicheleStoredChapterForConversation(chapterId=''){
+  await valDbReady;
+  if(pgPool){
+    if(chapterId){
+      const r=await dbQuery('select * from book_chapters where id=$1 limit 1',[chapterId]);
+      if(r.rows[0]) return normalizeBookChapter(r.rows[0]);
+    }
+    const r=await dbQuery('select * from book_chapters order by case when status=$1 then 0 else 1 end, chapter_number nulls last limit 1',['in_progress']);
+    if(r.rows[0]) return normalizeBookChapter(r.rows[0]);
+  }else{
+    const rows=(valStore().bookChapters||[]).map(normalizeBookChapter);
+    if(chapterId){
+      const found=rows.find(ch=>ch.id===chapterId);
+      if(found) return found;
+    }
+    return rows.find(ch=>ch.status==='in_progress')||rows.sort((a,b)=>Number(a.chapterNumber||999)-Number(b.chapterNumber||999))[0]||null;
+  }
+  return null;
+}
+async function listMicheleStoredChaptersForConversation(project){
+  await valDbReady;
+  const projectId=bookProjectId(project);
+  if(pgPool){
+    const r=await dbQuery('select * from book_chapters where book_project_id=$1 order by chapter_number nulls last',[projectId]);
+    return r.rows.map(normalizeBookChapter);
+  }
+  return (valStore().bookChapters||[]).filter(ch=>ch.bookProjectId===projectId).sort((a,b)=>Number(a.chapterNumber||999)-Number(b.chapterNumber||999)).map(normalizeBookChapter);
+}
+async function micheleBookConverse({chapterId,message,conversation=[],mode='',voiceMode=false}){
+  const userMessage=String(message||'').trim();
+  if(!userMessage) throw new Error('Missing Michele message.');
+  const project=await ensureMicheleBookProject().catch(()=>null);
+  const storedChapters=project?await listMicheleStoredChaptersForConversation(project).catch(()=>[]): [];
+  const fallbackChapter=await getMicheleStoredChapterForConversation(chapterId);
+  const chapter=micheleFindChapterForMessage(userMessage,storedChapters,fallbackChapter);
+  if(!chapter) throw new Error('No current chapter found.');
+  const lastCompleted=project?await latestMicheleCompletedChapter(project,storedChapters).catch(()=>null):null;
+  const [notes,voiceProfile]=project?await Promise.all([
+    listMicheleEditorNotes(chapter.id,chapter).catch(()=>[]),
+    getMicheleVoiceProfile(bookProjectId(project)).catch(()=>null)
+  ]):[[],null];
+  const parsed=await micheleConversationReply({chapter,userMessage,conversation,lastCompletedChapter:lastCompleted,mode,notes,voiceProfile,voiceMode});
+  await saveMemoryItem({kind:'michele_chapter_analysis',summary:`${parsed.mode||micheleEditorialMode(userMessage,mode)} conversation for ${micheleChapterLabel(chapter)}`,rawText:String(parsed.reply||'').slice(0,6000),importance:3,metadata:{source:'michele_book_converse',chapterId:chapter.id,chapterNumber:chapter.chapterNumber,mode:parsed.mode||micheleEditorialMode(userMessage,mode)}}).catch(()=>{});
+  return {
+    ok:true,
+    reply:String(parsed.reply||'Choose the next thing you want from this chapter: overview, developmental edit, proofread, or interview questions. Nothing has changed in the manuscript.').trim(),
+    readyToRewrite:!!parsed.readyToRewrite,
+    suggestedInstruction:String(parsed.suggestedInstruction||userMessage).trim(),
+    mode:parsed.mode||micheleEditorialMode(userMessage,mode),
+    chapter:{id:chapter.id,chapterNumber:chapter.chapterNumber,chapterTitle:chapter.chapterTitle},
+    lastCompletedChapter:lastCompleted?{id:lastCompleted.id,chapterNumber:lastCompleted.chapterNumber,chapterTitle:lastCompleted.chapterTitle}:null
+  };
+}
+async function micheleBookSessionTurn({sessionId='',chapterId='',message='',mode='interview',voiceMode=false,inputType='text'}){
+  const userMessage=String(message||'').trim();
+  if(!userMessage) throw new Error('Missing Michele message.');
+  const project=await ensureMicheleBookProject();
+  let storedChapters=await listMicheleStoredChaptersForConversation(project).catch(()=>[]);
+  if(!storedChapters.length) storedChapters=(await syncMicheleBookFromDocs()).chapters;
+  const fallbackChapter=await getMicheleStoredChapterForConversation(chapterId);
+  const chapter=micheleFindChapterForMessage(userMessage,storedChapters,fallbackChapter)||fallbackChapter||storedChapters[0];
+  if(!chapter) throw new Error('No current chapter found.');
+  const lastCompleted=await latestMicheleCompletedChapter(project,storedChapters).catch(()=>null);
+  let session=null;
+  if(sessionId){
+    if(pgPool){const r=await dbQuery("select * from book_conversation_sessions where id=$1 and tenant_id=$2 and user_id=$3 and status='active' limit 1",[sessionId,tenantId(),currentUserId()]);session=normalizeBookConversationSession(r.rows[0]);}
+    else session=normalizeBookConversationSession((valStore().bookConversationSessions||[]).find(s=>s.id===sessionId&&s.tenantId===tenantId()&&s.userId===currentUserId()&&s.status==='active'));
+  }
+  if(!session||session.chapterId!==chapter.id) session=await getOrCreateMicheleBookSession({project,chapter,mode:mode||'interview'});
+  await appendMicheleBookTurn({sessionId:session.id,role:'user',content:userMessage,inputType:inputType||(voiceMode?'voice':'text'),metadata:{chapterId:chapter.id,mode}});
+  const turnsBeforeAssistant=await listMicheleBookSessionTurns(session.id,24);
+  const [notes,voiceProfile]=await Promise.all([
+    listMicheleEditorNotes(chapter.id,chapter).catch(()=>[]),
+    getMicheleVoiceProfile(bookProjectId(project)).catch(()=>null)
+  ]);
+  const planned=await michelePlanBookConversationTurn({chapter,userMessage,session,turns:turnsBeforeAssistant,lastCompletedChapter:lastCompleted,mode:mode||session.mode,voiceMode,notes,voiceProfile});
+  const nextSession=await updateMicheleBookSessionState(session,{
+    mode:planned.mode||mode||session.mode,
+    currentGoal:planned.currentGoal,
+    lastQuestion:/\?\s*$/.test(planned.reply)?planned.reply:session.lastQuestion,
+    questionsAsked:/\?\s*$/.test(planned.reply)?[planned.reply]:[],
+    storyBeats:planned.storyBeats,
+    emotionalThreads:planned.emotionalThreads,
+    sceneDetails:planned.sceneDetails,
+    humorThreads:planned.humorThreads,
+    readerTakeaways:planned.readerTakeaways,
+    rewriteDirection:planned.rewriteDirection,
+    readinessScore:planned.readinessScore,
+    metadata:{editorialMove:planned.editorialMove||'',readyToRewrite:!!planned.readyToRewrite}
+  });
+  await appendMicheleBookTurn({sessionId:session.id,role:'assistant',content:planned.reply,inputType:'val_voice_or_text',metadata:{chapterId:chapter.id,mode:planned.mode,readinessScore:planned.readinessScore,editorialMove:planned.editorialMove||''}});
+  const turns=await listMicheleBookSessionTurns(session.id,24);
+  await saveMemoryItem({kind:'michele_book_conversation_turn',summary:`Conversation turn for ${micheleChapterLabel(chapter)}`,rawText:`Michele: ${userMessage}\nVAL: ${planned.reply}`.slice(0,6000),importance:3,metadata:{source:'michele_book_session_turn',sessionId:session.id,chapterId:chapter.id,chapterNumber:chapter.chapterNumber,mode:planned.mode}}).catch(()=>{});
+  return {
+    ok:true,
+    sessionId:session.id,
+    reply:planned.reply,
+    readyToRewrite:!!planned.readyToRewrite,
+    readyToWrite:!!planned.readyToRewrite,
+    editorialMove:planned.editorialMove||'',
+    suggestedInstruction:nextSession.rewriteDirection||planned.rewriteDirection||userMessage,
+    mode:planned.mode||mode,
+    chapter:safeMicheleChapter(chapter),
+    lastCompletedChapter:lastCompleted?safeMicheleChapter(lastCompleted):null,
+    session:publicBookConversationSession(nextSession,turns)
+  };
+}
+async function micheleBookDraftResponse({chapterId,response}){
+  if(!String(response||'').trim()) throw new Error('Missing Michele response.');
+  const synced=await syncMicheleBookFromDocs();
+  const projectId=bookProjectId(synced.project);
+  const chapter=chapterId?synced.chapters.find(ch=>ch.id===chapterId):await getMicheleCurrentChapter(synced.project,synced.chapters);
+  if(!chapter) throw new Error('No current chapter found.');
+  const [notes,voiceProfile]=await Promise.all([listMicheleEditorNotes(chapter.id,chapter),getMicheleVoiceProfile(projectId)]);
+  const feedback=await saveMicheleFeedback({chapterId:chapter.id,response});
+  const job=await createRewriteJob(chapter,response,chapter.currentText,feedback.id);
+  try{
+    const rewrite=await rewriteMicheleChapter({chapter,response,notes,voiceProfile});
+    await completeRewriteJob(job,{status:'draft_ready',afterText:rewrite.afterText,changeSummary:rewrite.changeSummary});
+    await saveMemoryItem({kind:'michele_book_revision_draft',summary:`Drafted revision for ${micheleChapterLabel(chapter)}`,rawText:rewrite.changeSummary||rewrite.afterText.slice(0,4000),importance:4,metadata:{source:'continue_my_book_draft',bookProjectId:projectId,chapterId:chapter.id,chapterNumber:chapter.chapterNumber,rewriteJobId:job.id}});
+    return {ok:true,draftReady:true,message:'Draft revision ready. Review it, then choose keep, adjust, or continue.',chapter:{id:chapter.id,chapterNumber:chapter.chapterNumber,chapterTitle:chapter.chapterTitle},rewriteJobId:job.id,afterText:rewrite.afterText,changeSummary:rewrite.changeSummary};
+  }catch(e){
+    await completeRewriteJob(job,{status:'failed',errorMessage:e.message});
+    throw e;
+  }
+}
+async function micheleBookApplyResponse({chapterId,response,placement='',rewriteJobId='',sessionId=''}){
+  if(!String(response||'').trim()&&!rewriteJobId&&sessionId){
+    const session=pgPool
+      ? normalizeBookConversationSession((await dbQuery('select * from book_conversation_sessions where id=$1 and tenant_id=$2 and user_id=$3 limit 1',[sessionId,tenantId(),currentUserId()])).rows[0])
+      : normalizeBookConversationSession((valStore().bookConversationSessions||[]).find(s=>s.id===sessionId&&s.tenantId===tenantId()&&s.userId===currentUserId()));
+    const turns=session?await listMicheleBookSessionTurns(session.id,20):[];
+    response=micheleConversationStateInstruction(session,turns);
+  }
+  if(!String(response||'').trim()&&!rewriteJobId) throw new Error('Missing Michele response.');
+  const synced=await syncMicheleBookFromDocs();
+  const projectId=bookProjectId(synced.project);
+  const chapter=chapterId?synced.chapters.find(ch=>ch.id===chapterId):await getMicheleCurrentChapter(synced.project,synced.chapters);
+  if(!chapter) throw new Error('No current chapter found.');
+  const placementCheck=await micheleOutputPlacementPreflight({project:synced.project,chapter,placement});
+  if(placementCheck&&placementCheck.placementRequired) return placementCheck;
+  let job=null,rewrite=null;
+  if(rewriteJobId){
+    job=await getRewriteJobById(rewriteJobId);
+    if(!job||job.chapterId!==chapter.id) throw new Error('Draft revision was not found for this chapter.');
+    if(!String(job.afterText||'').trim()) throw new Error('Draft revision has no manuscript text to approve.');
+    rewrite={afterText:job.afterText,changeSummary:job.changeSummary||'Approved Michele draft revision.'};
+    response=String(response||job.instruction||'Approved Michele draft revision.');
+  }else{
+    const [notes,voiceProfile]=await Promise.all([listMicheleEditorNotes(chapter.id,chapter),getMicheleVoiceProfile(projectId)]);
+    const feedback=await saveMicheleFeedback({chapterId:chapter.id,response});
+    job=await createRewriteJob(chapter,response,chapter.currentText,feedback.id);
+    try{rewrite=await rewriteMicheleChapter({chapter,response,notes,voiceProfile});}
+    catch(e){await completeRewriteJob(job,{status:'failed',errorMessage:e.message});throw e;}
+  }
+  await saveChapterSnapshot(chapter,'Snapshot before Michele approved draft write','continue_my_book_approved_write');
+  try{
+    const writeResult=await writeMicheleChapterResult({synced,chapter,fullText:rewrite.afterText,placement});
+    await updateMicheleChapterText(chapter,rewrite.afterText);
+    const readingCopy=writeResult;
+    await completeRewriteJob(job,{afterText:rewrite.afterText,changeSummary:rewrite.changeSummary});
+    const nextChapter=nextMicheleChapterAfter(synced.chapters,chapter);
+    await markMicheleChapterProgress(synced.project,{completedChapter:chapter,nextChapter});
+    await updateMicheleVoiceProfile({projectId,response,chapter,beforeText:chapter.currentText||'',afterText:rewrite.afterText}).catch(e=>console.warn('Voice profile update failed:',e.message));
+    await saveMemoryItem({kind:'michele_book_rewrite',summary:`Updated Chapter ${chapter.chapterNumber}: ${chapter.chapterTitle}`,rawText:rewrite.changeSummary||'',importance:5,metadata:{source:'continue_my_book',bookProjectId:projectId,chapterId:chapter.id,chapterNumber:chapter.chapterNumber,rewriteJobId:job.id,readingCopy,nextChapterId:nextChapter?.id||'',nextChapterNumber:nextChapter?.chapterNumber||''}});
+    return {ok:true,message:`Done. Chapter ${chapter.chapterNumber} has been written to the fresh manuscript document. The original manuscript was not edited.`,chapter:{id:chapter.id,chapterNumber:chapter.chapterNumber,chapterTitle:chapter.chapterTitle},nextChapter:nextChapter?{id:nextChapter.id,chapterNumber:nextChapter.chapterNumber,chapterTitle:nextChapter.chapterTitle}:null,rewriteJobId:job.id,changeSummary:rewrite.changeSummary,readingCopy};
+  }catch(e){
+    await completeRewriteJob(job,{status:'failed',errorMessage:e.message});
+    throw e;
+  }
+}
 async function rewriteGoogleDocChapter({query,documentId,targetDocumentId,mode='create'}){
   const doc=(await readValUploadedRewriteSource({query,documentId})) || await readGoogleDoc({documentId,query});
   if(!doc.text) throw new Error('Source document was found, but it did not contain readable text.');
@@ -5962,6 +10615,120 @@ app.post('/api/google/docs/rewrite',async(req,res)=>{
   }catch(e){res.status(500).json({ok:false,error:e.message});}
 });
 
+app.get('/api/michele/book/continue',async(req,res)=>{
+  try{res.json(await micheleBookContinueState());}
+  catch(e){await auditLog({req,action:'michele_book_continue_failed',resourceType:'book',metadata:{error:e.message},success:false}).catch(()=>{});res.status(200).json({ok:false,gentleMessage:gentleBookError(e)});}
+});
+app.post('/api/michele/book/converse',async(req,res)=>{
+  try{res.json(await micheleBookConverse({chapterId:req.body.chapterId||'',message:req.body.message||req.body.text||'',conversation:req.body.conversation||[],mode:req.body.mode||'',voiceMode:!!req.body.voiceMode}));}
+  catch(e){await auditLog({req,action:'michele_book_conversation_failed',resourceType:'book',metadata:{error:e.message},success:false}).catch(()=>{});res.status(200).json({ok:false,gentleMessage:gentleBookError(e)});}
+});
+app.post('/api/michele/book/session/turn',async(req,res)=>{
+  try{res.json(await micheleBookSessionTurn({sessionId:req.body.sessionId||'',chapterId:req.body.chapterId||'',message:req.body.message||req.body.text||'',mode:req.body.mode||'',voiceMode:!!req.body.voiceMode,inputType:req.body.inputType||''}));}
+  catch(e){await auditLog({req,action:'michele_book_session_turn_failed',resourceType:'book',metadata:{error:e.message},success:false}).catch(()=>{});res.status(200).json({ok:false,gentleMessage:gentleBookError(e)});}
+});
+app.post('/api/michele/book/draft',async(req,res)=>{
+  try{res.json(await micheleBookDraftResponse({chapterId:req.body.chapterId||'',response:req.body.response||req.body.text||''}));}
+  catch(e){await auditLog({req,action:'michele_book_draft_failed',resourceType:'book',metadata:{error:e.message},success:false}).catch(()=>{});res.status(200).json({ok:false,gentleMessage:gentleBookError(e)});}
+});
+app.post('/api/michele/book/respond',async(req,res)=>{
+  try{res.json(await micheleBookApplyResponse({chapterId:req.body.chapterId||'',response:req.body.response||req.body.text||'',placement:req.body.placement||'',rewriteJobId:req.body.rewriteJobId||'',sessionId:req.body.sessionId||''}));}
+  catch(e){await auditLog({req,action:'michele_book_rewrite_failed',resourceType:'book',metadata:{error:e.message},success:false}).catch(()=>{});res.status(200).json({ok:false,gentleMessage:gentleBookError(e)});}
+});
+async function latestMicheleSnapshot(chapterId=''){
+  if(pgPool){
+    const args=[];let where="where coalesce(length(trim(full_text)),0)>0";
+    if(chapterId){args.push(chapterId);where+=' and chapter_id=$1';}
+    const r=await dbQuery(`select * from chapter_versions ${where} order by created_at desc limit 1`,args);
+    const row=r.rows[0];
+    return row?{id:row.id,chapterId:row.chapter_id,versionNumber:row.version_number,changeSummary:row.change_summary,source:row.source,createdAt:row.created_at,preview:String(row.full_text||'').slice(0,900)}:null;
+  }
+  const rows=(valStore().chapterVersions||[]).filter(v=>(!chapterId||v.chapterId===chapterId)&&String(v.fullText||'').trim()).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));
+  const row=rows[0];
+  return row?{id:row.id,chapterId:row.chapterId,versionNumber:row.versionNumber,changeSummary:row.changeSummary,source:row.source,createdAt:row.createdAt,preview:String(row.fullText||'').slice(0,900)}:null;
+}
+async function micheleAdminState(){
+  const project=await ensureMicheleBookProject();
+  let chapters=[],chapterSyncError='';
+  try{chapters=(await syncMicheleBookFromDocs()).chapters;}
+  catch(e){chapterSyncError=e.message||String(e);}
+  const latest=await latestMicheleSnapshot();
+  const google=await getGoogleConnectionStatus(REQUIRED_GOOGLE_DOC_SCOPES).catch(e=>({connected:false,error:e.message,missingScopes:REQUIRED_GOOGLE_DOC_SCOPES}));
+  const openAiRuntimeConfigured=!!(await resolveOpenAIKey().catch(()=>''));
+  const cfg={...micheleBookConfig(),masterDocId:bookProjectMasterDocId(project),readingCopyDocId:bookProjectReadingDocId(project)};
+  return {ok:true,config:cfg,project:{id:bookProjectId(project),title:project.title||cfg.title,masterDocId:cfg.masterDocId,readingCopyDocId:cfg.readingCopyDocId,masterDocUrl:googleDocUrl(cfg.masterDocId),readingCopyDocUrl:googleDocUrl(cfg.readingCopyDocId)},googleDocs:{connected:!!google.connected,missingScopes:google.missingScopes||[],error:google.error||'',chapterSyncError},ai:{openAiRuntimeConfigured,platformFallbackAllowed:platformKeyFallbackAllowed('openai'),tenantOpenAiKeyRequired:/^(1|true|yes)$/i.test(String(process.env.VAL_REQUIRE_TENANT_OPENAI_KEY||''))},chapters,latestSnapshot:latest};
+}
+app.get('/api/michele/book/admin',requirePermission('settings:manage'),async(req,res)=>{try{res.json(await micheleAdminState());}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.post('/api/michele/book/admin/config',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const project=await updateMicheleBookProjectConfig({
+      masterDocId:req.body.masterDocId||req.body.sourceDocId||req.body.sourceManuscriptDocId,
+      readingCopyDocId:req.body.readingCopyDocId||req.body.outputDocId||req.body.writeDocId,
+      title:req.body.title
+    });
+    const doc=await readGoogleDocRaw(project.masterDocId);
+    const chapters=parseMicheleDocChapters(doc);
+    res.json({ok:true,project,sourceTitle:doc.title||'Google Doc',chapterCount:chapters.length});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/michele/book/admin/test-read',requirePermission('settings:manage'),async(req,res)=>{
+  try{const project=await ensureMicheleBookProject();const doc=await readGoogleDocRaw(bookProjectMasterDocId(project));res.json({ok:true,title:doc.title,chapterCount:parseMicheleDocChapters(doc).length});}
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/michele/book/admin/test-write',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const project=await ensureMicheleBookProject();
+    const readingId=bookProjectReadingDocId(project),masterId=bookProjectMasterDocId(project);
+    if(!readingId) throw new Error('MICHELE_READING_COPY_DOC_ID is not configured.');
+    if(readingId===masterId) throw new Error('Reading/output doc matches the source manuscript. Refusing to edit the original source manuscript.');
+    const doc=await readGoogleDocRaw(readingId);
+    res.json({ok:true,result:{id:readingId,title:doc.title||'Fresh manuscript output',url:googleDocUrl(readingId),writeAccessLikely:true,mutated:false}});
+  }
+  catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/michele/book/admin/format-output',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const project=await ensureMicheleBookProject();
+    const readingId=bookProjectReadingDocId(project);
+    const masterId=bookProjectMasterDocId(project);
+    if(!readingId) throw new Error('MICHELE_READING_COPY_DOC_ID is not configured. Refusing to edit the original source manuscript.');
+    if(readingId===masterId) throw new Error('Reading/output doc matches the source manuscript. Refusing to edit the original source manuscript.');
+    const result=await formatGoogleDocForManuscript(readingId);
+    await auditLog({req,action:'michele_book_output_formatted',resourceType:'book',resourceId:bookProjectId(project),metadata:{readingCopyDocId:readingId,masterDocId:masterId,url:result.url},success:true}).catch(()=>{});
+    res.json({ok:true,result,sourceDocId:masterId,outputDocId:readingId,originalManuscriptEdited:false});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/michele/book/admin/import-edits',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const text=String(req.body.text||req.body.rawText||'').trim();
+    if(text.length<50) throw new Error('Import text is too short.');
+    const synced=await syncMicheleBookFromDocs();
+    const result=await importMicheleMasterEdits({project:synced.project,chapters:synced.chapters,text,sourceTitle:req.body.sourceTitle||'Master Edits'});
+    await saveMemoryItem({kind:'book_editor_notes_import',summary:`Imported ${req.body.sourceTitle||'Master Edits'} for ${synced.chapters.length} chapters`,rawText:text.slice(0,50000),importance:5,metadata:{source:'michele_book_admin_import',sourceTitle:req.body.sourceTitle||'Master Edits',chapterCount:synced.chapters.length,noteCount:result.count}});
+    await auditLog({req,action:'michele_book_edits_imported',resourceType:'book',resourceId:bookProjectId(synced.project),metadata:{sourceTitle:req.body.sourceTitle||'Master Edits',chapterCount:synced.chapters.length,noteCount:result.count},success:true}).catch(()=>{});
+    res.json({ok:true,...result,chapterCount:synced.chapters.length});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/michele/book/admin/restore',requirePermission('settings:manage'),async(req,res)=>{
+  try{
+    const versionId=req.body.versionId||'',chapterId=req.body.chapterId||'';
+    let version=null;
+    if(pgPool){const r=await dbQuery('select * from chapter_versions where id=$1 or (chapter_id=$2 and version_number=$3) order by created_at desc limit 1',[versionId,chapterId,Number(req.body.versionNumber)||0]);version=r.rows[0];}
+    else version=(valStore().chapterVersions||[]).find(v=>v.id===versionId)||(valStore().chapterVersions||[]).find(v=>v.chapterId===chapterId&&Number(v.versionNumber)===Number(req.body.versionNumber));
+    if(!version) throw new Error('Snapshot version not found.');
+    const synced=await syncMicheleBookFromDocs();
+    const chapter=synced.chapters.find(ch=>ch.id===(version.chapter_id||version.chapterId));
+    if(!chapter) throw new Error('Chapter for snapshot not found.');
+    await saveChapterSnapshot(chapter,'Snapshot before admin restore','before_restore');
+    const fullText=version.full_text||version.fullText||'';
+    if(!String(fullText||'').trim()) throw new Error('Snapshot has no manuscript text to restore.');
+    await writeMicheleChapterResult({synced,chapter,fullText});
+    await updateMicheleChapterText(chapter,fullText);
+    await auditLog({req,action:'michele_book_chapter_restored',resourceType:'chapter',resourceId:chapter.id,metadata:{versionId:version.id||versionId,versionNumber:version.version_number||version.versionNumber},success:true}).catch(()=>{});
+    res.json({ok:true,message:`Restored Chapter ${chapter.chapterNumber} from snapshot ${version.version_number||version.versionNumber}.`});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+
 async function saveMemoryItem(payload){
   if(DEMO_MODE){
     const state=requestContext.getStore()?.demoState;
@@ -5983,21 +10750,159 @@ async function saveMemoryItem(payload){
   }
   return {id};
 }
+const TRANSCRIPT_SAFE_MATCH_CONFIDENCE=0.82;
+const TRANSCRIPT_SAFE_ACTION_CONFIDENCE=0.82;
+function transcriptFileArray(store,key){if(!Array.isArray(store[key]))store[key]=[];return store[key];}
+function transcriptDemoArray(key){const state=requestContext.getStore()?.demoState;if(!state)return null;if(!Array.isArray(state[key]))state[key]=[];return state[key];}
+function valTitleCandidate(value){
+  const title=String(value||'').replace(/\s+/g,' ').trim();
+  if(!title)return '';
+  const low=title.toLowerCase();
+  const generic=[
+    'transcript','webhook transcript','meeting transcript','call transcript','processed transcript','untitled transcript',
+    'zoom transcript','recording transcript','meeting notes','call notes','transcript notes'
+  ];
+  if(generic.includes(low))return '';
+  if(/^(prepare me for|summarize this past meeting|meeting prep|webhook|processed|untitled)(\b|:)/i.test(title))return '';
+  if(/^(transcript|meeting|call|zoom|recording)\s*#?\d*$/i.test(title))return '';
+  return title.slice(0,180);
+}
+function transcriptDateLabel(value){
+  const d=value?new Date(value):null;
+  if(!d||isNaN(d.getTime()))return '';
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+function eventTitleFromContext(ctx={}){
+  const meta=ctx.metadata||{},sourceMeta=meta.sourcePayloadMetadata||{};
+  const event=ctx.calendarEvent||ctx.event||ctx.meetingMatch?.event||ctx.meetingMatch?.calendarEvent||{};
+  return valTitleCandidate(ctx.calendarEventTitle||ctx.calendar_event_title||ctx.eventTitle||ctx.event_title||ctx.meetingMatch?.meetingTitle||ctx.meetingMatch?.calendarEventTitle||ctx.meetingMatch?.eventTitle||ctx.meetingMatch?.title||event.title||event.summary||event.name||meta.calendarEventTitle||meta.calendar_event_title||meta.eventTitle||meta.event_title||sourceMeta.calendarEventTitle||sourceMeta.eventTitle);
+}
+function transcriptDisplayTitleFromPayload(payload={},rawText=''){
+  const meta=payload.metadata||{},sourceMeta=meta.sourcePayloadMetadata||{};
+  const calendarTitle=eventTitleFromContext(payload);
+  if(calendarTitle)return calendarTitle;
+  const meetingTitle=valTitleCandidate(payload.meetingTitle||payload.meeting_title||payload.meetingName||payload.meeting_name||meta.meetingTitle||meta.meeting_name||sourceMeta.meetingTitle||sourceMeta.meeting_name);
+  if(meetingTitle)return meetingTitle;
+  const transcriptMetaTitle=valTitleCandidate(payload.callTitle||payload.call_title||payload.callName||payload.call_name||payload.title||meta.callTitle||meta.call_name||meta.title||sourceMeta.callTitle||sourceMeta.call_name||sourceMeta.title);
+  if(transcriptMetaTitle)return transcriptMetaTitle;
+  const contact=valTitleCandidate(payload.contactName||payload.contact_name||payload.personName||meta.contactName||meta.contact_name||meta.personName||sourceMeta.contactName||sourceMeta.personName);
+  const company=valTitleCandidate(payload.companyName||payload.company||meta.companyName||meta.company||sourceMeta.companyName||sourceMeta.company);
+  const date=transcriptDateLabel(payload.meetingDatetime||payload.meeting_datetime||payload.timestamp||payload.createdAt||payload.receivedAt||meta.timestamp||meta.createdAt);
+  if(contact||company)return [contact||company,contact&&company?company:'',date].filter(Boolean).join(' · ');
+  const speakers=[...String(rawText||payload.transcript||'').matchAll(/^\s*([^:\n]{2,50}):\s*.+$/gm)].map(m=>m[1].trim()).filter(n=>!/^https?|meeting|transcript|speaker$/i.test(n));
+  const unique=[...new Set(speakers)].slice(0,3);
+  if(unique.length)return unique.join('/')+(date?' · '+date:'');
+  return 'Untitled Transcript';
+}
+function contextualTaskTitle(contextTitle,taskTitle){
+  const task=cleanTaskTitle(taskTitle);
+  const context=valTitleCandidate(contextTitle);
+  if(!task)return context||'Untitled task';
+  if(!context||task.toLowerCase().startsWith(context.toLowerCase()+' — '))return task;
+  return `${context} — ${task}`;
+}
+async function saveTranscriptIndexRaw(payload,id){
+  const rawTranscript=payload.transcript||payload.rawText||payload.text||'';
+  const row={transcriptId:id,source:payload.source||payload.provider||'unknown',meetingTitle:transcriptDisplayTitleFromPayload(payload,rawTranscript),meetingDatetime:payload.meetingDatetime||payload.meeting_datetime||payload.timestamp||payload.createdAt||null,calendarEventId:payload.calendarEventId||payload.calendar_event_id||payload.meetingId||payload.meeting_id||'',rawTranscript,processingStatus:'received',summaryStatus:'pending',createdAt:payload.timestamp||payload.createdAt||new Date().toISOString(),updatedAt:new Date().toISOString()};
+  if(DEMO_MODE){const rows=transcriptDemoArray('transcriptIndex');if(rows){const i=rows.findIndex(x=>x.transcriptId===id);if(i>=0)rows[i]={...rows[i],...row};else rows.unshift(row);}return row;}
+  await valDbReady;
+  if(pgPool){await dbQuery(`insert into transcripts (transcript_id,user_id,tenant_id,source,meeting_title,meeting_datetime,calendar_event_id,raw_transcript,processing_status,summary_status,created_at,updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,'received','pending',coalesce($9::timestamptz,now()),now()) on conflict (transcript_id) do update set source=excluded.source,meeting_title=excluded.meeting_title,meeting_datetime=coalesce(excluded.meeting_datetime,transcripts.meeting_datetime),calendar_event_id=coalesce(nullif(excluded.calendar_event_id,''),transcripts.calendar_event_id),raw_transcript=excluded.raw_transcript,updated_at=now()`,[id,VAL_USER_ID,CLIENT_CONFIG.clientSlug||'default',row.source,row.meetingTitle,row.meetingDatetime,row.calendarEventId,row.rawTranscript,row.createdAt]);}
+  else{const store=valStore(),rows=transcriptFileArray(store,'transcriptIndex'),i=rows.findIndex(x=>x.transcriptId===id);if(i>=0)rows[i]={...rows[i],...row};else rows.unshift(row);saveValStore(store);}
+  return row;
+}
+async function updateTranscriptIndexStatus(id,updates={}){
+  const clean={processingStatus:updates.processingStatus,summaryStatus:updates.summaryStatus,calendarEventId:updates.calendarEventId,meetingDatetime:updates.meetingDatetime,meetingTitle:valTitleCandidate(updates.meetingTitle||updates.calendarEventTitle),updatedAt:new Date().toISOString()};
+  if(DEMO_MODE){const row=(transcriptDemoArray('transcriptIndex')||[]).find(x=>x.transcriptId===id);if(row)Object.keys(clean).forEach(k=>clean[k]!==undefined&&(row[k]=clean[k]));return;}
+  await valDbReady;
+  if(pgPool){await dbQuery(`update transcripts set processing_status=coalesce($1,processing_status),summary_status=coalesce($2,summary_status),calendar_event_id=coalesce(nullif($3,''),calendar_event_id),meeting_datetime=coalesce($4::timestamptz,meeting_datetime),meeting_title=coalesce(nullif($5,''),meeting_title),updated_at=now() where transcript_id=$6 and user_id=$7`,[clean.processingStatus||null,clean.summaryStatus||null,clean.calendarEventId||'',clean.meetingDatetime||null,clean.meetingTitle||'',id,VAL_USER_ID]);}
+  else{const store=valStore(),row=transcriptFileArray(store,'transcriptIndex').find(x=>x.transcriptId===id);if(row)Object.keys(clean).forEach(k=>clean[k]!==undefined&&(row[k]=clean[k]));saveValStore(store);}
+}
+async function logTranscriptAction(transcriptId,actionType,targetRecordId,status,errorMessage=''){
+  const row={actionId:uuid('tr_action'),transcriptId,actionType,targetRecordId:targetRecordId||'',status,errorMessage:errorMessage||'',createdAt:new Date().toISOString()};
+  if(DEMO_MODE){const rows=transcriptDemoArray('transcriptActionLog');if(rows)rows.push(row);return row;}
+  await valDbReady;if(pgPool)await dbQuery('insert into transcript_action_log (action_id,transcript_id,action_type,target_record_id,status,error_message,created_at) values ($1,$2,$3,$4,$5,$6,now())',[row.actionId,transcriptId,actionType,row.targetRecordId,status,row.errorMessage||null]);else{const store=valStore();transcriptFileArray(store,'transcriptActionLog').push(row);saveValStore(store);}return row;
+}
+async function replaceTranscriptParticipants(transcriptId,participants){
+  if(DEMO_MODE){const rows=transcriptDemoArray('transcriptParticipants');if(rows){for(let i=rows.length-1;i>=0;i--)if(rows[i].transcriptId===transcriptId)rows.splice(i,1);rows.push(...participants);}return;}
+  await valDbReady;if(pgPool){await dbQuery('delete from transcript_participants where transcript_id=$1',[transcriptId]);for(const p of participants)await dbQuery(`insert into transcript_participants (participant_id,transcript_id,speaker_name_raw,matched_contact_id,matched_contact_name,matched_email,matched_phone,matched_company,match_confidence,match_reason,needs_review,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())`,[p.participantId,transcriptId,p.speakerNameRaw,p.matchedContactId||null,p.matchedContactName||null,p.matchedEmail||null,p.matchedPhone||null,p.matchedCompany||null,p.matchConfidence||0,p.matchReason||'',!!p.needsReview]);}else{const store=valStore();store.transcriptParticipants=transcriptFileArray(store,'transcriptParticipants').filter(x=>x.transcriptId!==transcriptId);store.transcriptParticipants.push(...participants);saveValStore(store);}
+}
+async function saveTranscriptSummary(transcriptId,summary){
+  const row={summaryId:uuid('tr_summary'),transcriptId,executiveSummary:summary.executiveSummary||summary.summary||'Summary unavailable.',clientSummary:summary.clientSummary||'',internalNotes:summary.internalNotes||'',keyDecisions:summary.keyDecisions||[],openQuestions:summary.openQuestions||[],relationshipUpdates:summary.relationshipUpdates||[],createdAt:new Date().toISOString()};
+  if(DEMO_MODE){const rows=transcriptDemoArray('transcriptSummaries');if(rows){for(let i=rows.length-1;i>=0;i--)if(rows[i].transcriptId===transcriptId)rows.splice(i,1);rows.push(row);}}
+  else{await valDbReady;if(pgPool){await dbQuery('delete from transcript_summaries where transcript_id=$1',[transcriptId]);await dbQuery(`insert into transcript_summaries (summary_id,transcript_id,executive_summary,client_summary,internal_notes,key_decisions,open_questions,relationship_updates,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,now())`,[row.summaryId,transcriptId,row.executiveSummary,row.clientSummary,row.internalNotes,JSON.stringify(row.keyDecisions),JSON.stringify(row.openQuestions),JSON.stringify(row.relationshipUpdates)]);}else{const store=valStore();store.transcriptSummaries=transcriptFileArray(store,'transcriptSummaries').filter(x=>x.transcriptId!==transcriptId);store.transcriptSummaries.push(row);saveValStore(store);}}
+  await logTranscriptAction(transcriptId,'summary_created',row.summaryId,'completed');return row;
+}
+async function saveStagedTranscriptTask(row){
+  if(DEMO_MODE){const rows=transcriptDemoArray('transcriptTasks');if(rows)rows.push(row);}
+  else{await valDbReady;if(pgPool)await dbQuery(`insert into transcript_tasks (task_id,transcript_id,assigned_to_contact_id,assigned_to_name,task_title,task_description,due_date,priority,confidence,status,needs_approval,source_quote,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,[row.taskId,row.transcriptId,row.assignedToContactId||null,row.assignedToName||null,row.taskTitle,row.taskDescription||'',row.dueDate||null,row.priority||'medium',row.confidence||0,row.status||'staged',!!row.needsApproval,row.sourceQuote]);else{const store=valStore();transcriptFileArray(store,'transcriptTasks').push(row);saveValStore(store);}}
+  await logTranscriptAction(row.transcriptId,'task_extracted',row.taskId,'completed');return row;
+}
+async function updateStagedTranscriptTask(taskId,updates){
+  if(DEMO_MODE){const row=(transcriptDemoArray('transcriptTasks')||[]).find(x=>x.taskId===taskId);if(row)Object.assign(row,updates);return row;}
+  await valDbReady;if(pgPool){const r=await dbQuery('update transcript_tasks set status=coalesce($1,status),needs_approval=coalesce($2,needs_approval),assigned_to_contact_id=coalesce($3,assigned_to_contact_id),assigned_to_name=coalesce($4,assigned_to_name) where task_id=$5 returning *',[updates.status||null,updates.needsApproval===undefined?null:!!updates.needsApproval,updates.assignedToContactId||null,updates.assignedToName||null,taskId]);return r.rows[0];}const store=valStore(),row=transcriptFileArray(store,'transcriptTasks').find(x=>x.taskId===taskId);if(row)Object.assign(row,updates);saveValStore(store);return row;
+}
+async function saveStagedContactUpdate(row){
+  if(DEMO_MODE){const rows=transcriptDemoArray('transcriptContactUpdates');if(rows)rows.push(row);}else{await valDbReady;if(pgPool)await dbQuery(`insert into transcript_contact_updates (update_id,transcript_id,contact_id,field_to_update,old_value,new_value,reason,source_quote,confidence,approved,created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,[row.updateId,row.transcriptId,row.contactId||null,row.fieldToUpdate,row.oldValue||'',row.newValue||'',row.reason||'',row.sourceQuote,row.confidence||0,!!row.approved]);else{const store=valStore();transcriptFileArray(store,'transcriptContactUpdates').push(row);saveValStore(store);}}
+  await logTranscriptAction(row.transcriptId,'contact_update_extracted',row.updateId,'completed');return row;
+}
+function transcriptPgRow(row){
+  if(!row)return row;
+  const out={};
+  for(const [key,value] of Object.entries(row))out[key.replace(/_([a-z])/g,(_,c)=>c.toUpperCase())]=value;
+  ['keyDecisions','openQuestions','relationshipUpdates'].forEach(key=>{if(typeof out[key]==='string')try{out[key]=JSON.parse(out[key]);}catch(e){}});
+  return out;
+}
+async function transcriptIndexData(transcriptId=''){
+  if(DEMO_MODE){
+    const get=key=>(transcriptDemoArray(key)||[]).filter(row=>!transcriptId||row.transcriptId===transcriptId);
+    return {transcripts:get('transcriptIndex'),participants:get('transcriptParticipants'),summaries:get('transcriptSummaries'),tasks:get('transcriptTasks'),contactUpdates:get('transcriptContactUpdates'),actionLog:get('transcriptActionLog')};
+  }
+  await valDbReady;
+  if(pgPool){
+    const where=transcriptId?' and transcript_id=$2':'',args=transcriptId?[VAL_USER_ID,transcriptId]:[VAL_USER_ID];
+    const transcripts=(await dbQuery(`select * from transcripts where user_id=$1${where} order by created_at desc`,args)).rows.map(transcriptPgRow);
+    const ids=transcripts.map(row=>row.transcriptId);if(!ids.length)return {transcripts:[],participants:[],summaries:[],tasks:[],contactUpdates:[],actionLog:[]};
+    const fetch=async table=>(await dbQuery(`select * from ${table} where transcript_id=any($1::text[]) order by created_at asc`,[ids])).rows.map(transcriptPgRow);
+    return {transcripts,participants:await fetch('transcript_participants'),summaries:await fetch('transcript_summaries'),tasks:await fetch('transcript_tasks'),contactUpdates:await fetch('transcript_contact_updates'),actionLog:await fetch('transcript_action_log')};
+  }
+  const store=valStore(),get=key=>transcriptFileArray(store,key).filter(row=>!transcriptId||row.transcriptId===transcriptId);
+  return {transcripts:get('transcriptIndex'),participants:get('transcriptParticipants'),summaries:get('transcriptSummaries'),tasks:get('transcriptTasks'),contactUpdates:get('transcriptContactUpdates'),actionLog:get('transcriptActionLog')};
+}
+function transcriptDetailFromIndex(data,transcript){
+  const id=transcript.transcriptId;
+  const participants=data.participants.filter(row=>row.transcriptId===id),tasks=data.tasks.filter(row=>row.transcriptId===id),contactUpdates=data.contactUpdates.filter(row=>row.transcriptId===id),actionLog=data.actionLog.filter(row=>row.transcriptId===id),summary=data.summaries.find(row=>row.transcriptId===id)||null;
+  const reviewCount=participants.filter(row=>row.needsReview).length+tasks.filter(row=>row.needsApproval).length+contactUpdates.filter(row=>!row.approved).length;
+  const title=transcriptDisplayTitleFromPayload({...transcript,title:transcript.meetingTitle,meetingTitle:transcript.meetingTitle,calendarEventTitle:transcript.calendarEventTitle},transcript.rawTranscript);
+  return {...transcript,id,title,meetingTitle:title,createdAt:transcript.meetingDatetime||transcript.createdAt,transcriptText:transcript.rawTranscript,summary,participants,tasks,contactUpdates,actionLog,taskCount:tasks.length,reviewCount};
+}
+async function clearTranscriptStaging(transcriptId){
+  if(DEMO_MODE){for(const key of ['transcriptParticipants','transcriptSummaries','transcriptTasks','transcriptContactUpdates','transcriptActionLog']){const rows=transcriptDemoArray(key)||[];for(let i=rows.length-1;i>=0;i--)if(rows[i].transcriptId===transcriptId)rows.splice(i,1);}return;}
+  await valDbReady;
+  if(pgPool){for(const table of ['transcript_action_log','transcript_contact_updates','transcript_tasks','transcript_summaries','transcript_participants'])await dbQuery(`delete from ${table} where transcript_id=$1`,[transcriptId]);return;}
+  const store=valStore();for(const key of ['transcriptParticipants','transcriptSummaries','transcriptTasks','transcriptContactUpdates','transcriptActionLog'])store[key]=transcriptFileArray(store,key).filter(row=>row.transcriptId!==transcriptId);saveValStore(store);
+}
 async function saveTranscript(payload){
+  const indexId=payload.id||uuid(DEMO_MODE?'demo-tr':'tr');
+  payload={...payload,id:indexId};
+  await saveTranscriptIndexRaw(payload,indexId);
   if(DEMO_MODE){
     const state=requestContext.getStore()?.demoState;
-    const id=payload.id||uuid('demo-tr');
+    const id=indexId;
     const type=payload.type||'transcript';
     const rawText=payload.transcript||payload.rawText||payload.text||'';
-    if(state) state.transcripts.unshift({id,type,title:payload.title||'',rawText,metadata:{...payload},createdAt:payload.timestamp||new Date().toISOString()});
+    const nested=payload.metadata&&typeof payload.metadata==='object'&&!Array.isArray(payload.metadata)?payload.metadata:{};
+    const metadata={...nested,...payload,receivedAt:payload.receivedAt||new Date().toISOString()};
+    delete metadata.metadata;delete metadata.transcript;delete metadata.rawText;delete metadata.raw_text;delete metadata.transcriptText;delete metadata.transcript_text;delete metadata.text;delete metadata.content;delete metadata.body;delete metadata.segments;delete metadata.sentences;
+    if(state) state.transcripts.unshift({id,type,title:payload.title||'',rawText,metadata,createdAt:payload.timestamp||payload.createdAt||new Date().toISOString()});
     return {id,type};
   }
   await valDbReady;
-  const id=payload.id||uuid('tr');
+  const id=indexId;
   const type=payload.type||'transcript';
   const rawText=payload.transcript||payload.rawText||payload.text||'';
-  const metadata={...payload};
-  delete metadata.transcript; delete metadata.rawText;
+  const nested=payload.metadata&&typeof payload.metadata==='object'&&!Array.isArray(payload.metadata)?payload.metadata:{};
+  const metadata={...nested,...payload,receivedAt:payload.receivedAt||new Date().toISOString()};
+  delete metadata.metadata;delete metadata.transcript;delete metadata.rawText;delete metadata.raw_text;delete metadata.transcriptText;delete metadata.transcript_text;delete metadata.text;delete metadata.content;delete metadata.body;delete metadata.segments;delete metadata.sentences;
   if(pgPool){
     await dbQuery('insert into val_transcripts (id,user_id,type,title,raw_text,metadata,created_at) values ($1,$2,$3,$4,$5,$6,coalesce($7::timestamptz,now()))',[id,VAL_USER_ID,type,payload.title||null,rawText,JSON.stringify(metadata),payload.timestamp||null]);
   }else{
@@ -6028,6 +10933,21 @@ async function saveTranscript(payload){
   }
   return {id,type};
 }
+async function updateTranscriptMetadata(id,updates={}){
+  if(!id||!updates||typeof updates!=='object') return;
+  if(DEMO_MODE){
+    const row=(requestContext.getStore()?.demoState?.transcripts||[]).find(t=>String(t.id)===String(id));
+    if(row)row.metadata={...(row.metadata||{}),...updates};
+    return;
+  }
+  await valDbReady;
+  if(pgPool){
+    await dbQuery('update val_transcripts set metadata=coalesce(metadata,\'{}\'::jsonb)||$1::jsonb where id=$2 and user_id=$3',[JSON.stringify(updates),id,VAL_USER_ID]);
+    return;
+  }
+  const store=valStore(),row=(store.transcripts||[]).find(t=>String(t.id)===String(id));
+  if(row){row.metadata={...(row.metadata||{}),...updates};saveValStore(store);}
+}
 async function recentTranscripts(days=7){
   if(DEMO_MODE) return cloneDemo(requestContext.getStore()?.demoState?.transcripts || []);
   await valDbReady;
@@ -6037,6 +10957,35 @@ async function recentTranscripts(days=7){
     return r.rows.map(row=>({id:row.id,type:row.type,title:row.title||'',rawText:row.raw_text||'',metadata:row.metadata||{},createdAt:row.created_at?row.created_at.toISOString():''}));
   }
   return (valStore().transcripts||[]).filter(t=>new Date(t.createdAt||0)>=new Date(since));
+}
+function isTranscriptMemoryRecord(item={}){
+  const kind=String(item.kind||item.type||'').toLowerCase();
+  const metadata=item.metadata||{};
+  if(['transcript_insight','relationship_memory'].includes(kind)) return false;
+  return /(^|_)transcript($|_)/.test(kind)||!!metadata.transcriptId;
+}
+async function transcriptArchiveRecords(days=3650,limit=500){
+  const [stored,memory]=await Promise.all([recentTranscripts(days),recentMemoryItems(days,Math.max(limit*6,600))]);
+  const byId=new Map();
+  for(const row of (stored||[]).filter(Boolean))byId.set(String(row.id),{...row,metadata:row.metadata||{}});
+  const legacyGroups=new Map();
+  for(const item of (memory||[]).filter(isTranscriptMemoryRecord)){
+    const metadata=item.metadata||{},id=String(metadata.transcriptId||item.id||'');
+    if(!id)continue;
+    if(byId.has(id)){
+      const current=byId.get(id);
+      current.metadata={...metadata,...(current.metadata||{})};
+      if(!current.rawText)current.rawText=item.rawText||'';
+      continue;
+    }
+    const group=legacyGroups.get(id)||[];group.push(item);legacyGroups.set(id,group);
+  }
+  for(const [id,items] of legacyGroups){
+    items.sort((a,b)=>Number(a.metadata?.chunkIndex||1)-Number(b.metadata?.chunkIndex||1));
+    const first=items[0],metadata=items.reduce((all,item)=>({...all,...(item.metadata||{})}),{});
+    byId.set(id,{id,type:first.kind||first.type||'transcript',title:metadata.title||first.summary||'Recovered transcript',rawText:items.map(item=>item.rawText||'').filter(Boolean).join('\n\n'),metadata:{...metadata,recoveredFrom:'val_memory_items'},createdAt:first.createdAt||metadata.timestamp||metadata.createdAt||''});
+  }
+  return [...byId.values()].sort((a,b)=>interactionDate(b.createdAt)-interactionDate(a.createdAt)).slice(0,limit);
 }
 async function countTranscriptMeetingLinks(days=7){
   await valDbReady;
@@ -6151,7 +11100,7 @@ async function saveMeetingTranscriptLink({event,transcript,confidence,reason,con
     else store.meetingTranscriptLinks.push(record);
     saveValStore(store);
   }
-  return record;
+  return {...record,meetingTitle:event.title||event.summary||event.name||'',calendarEventTitle:event.title||event.summary||event.name||'',calendarEventId:event.id||''};
 }
 async function linkTranscriptToBestMeeting(transcript,options={}){
   const now=new Date(transcript.createdAt||Date.now());
@@ -6399,7 +11348,7 @@ function responseText(payload){
 async function callOpenAIResponses({system,messages,maxTokens=1200,temperature=0.4,json=false}){
   const openAiKey=await resolveOpenAIKey();
   const openAiModel=await resolveOpenAIModel();
-  if(!openAiKey) throw new Error('OPENAI_KEY not configured');
+  if(!openAiKey) throw new Error('OPENAI_API_KEY not configured');
   const body = {
     model:openAiModel,
     instructions:[system,HUMAN_VOICE_RULES].filter(Boolean).join('\n\n'),
@@ -6433,7 +11382,7 @@ async function callOpenAIResponses({system,messages,maxTokens=1200,temperature=0
 async function callOpenAIWebResearch({system,user,maxTokens=2200,temperature=0.1}){
   const openAiKey=await resolveOpenAIKey();
   const openAiModel=await resolveOpenAIModel();
-  if(!openAiKey) throw new Error('OPENAI_KEY not configured');
+  if(!openAiKey) throw new Error('OPENAI_API_KEY not configured');
   const body = {
     model: openAiModel,
     input: [
@@ -6468,6 +11417,11 @@ async function callOpenAIWebResearch({system,user,maxTokens=2200,temperature=0.1
 const GOALL_LEADS_SYSTEM_PROMPT = `
 You are Leads MCP GOALL, a focused lead generation and growth strategy specialist for the GOALL Agency.
 
+Scrape timing expectations:
+- Lead discovery now runs Level 1 business search asynchronously and waits for real results rather than failing fast on a short timeout. A focused single-industry, single-city search can take roughly 30-90 seconds; a broader multi-industry or multi-city search can take close to the full time budget.
+- When starting a lead scrape, tell the user it may take up to a couple of minutes for real results, rather than promising a "quick preview" or implying results will return in just a few seconds.
+- Do not describe the scrape as running in a fast first pass with deeper enrichment deferred to "keep the preview from stalling" - that framing no longer reflects how the pipeline works. The wait is for genuine Level 1 results, not enrichment.
+
 Help users identify target markets, define ideal customer profiles, build prospecting systems, create outreach strategies, qualify leads, improve conversion rates, and develop repeatable pipeline growth processes.
 
 Provide practical, results-oriented support for outbound campaigns, inbound lead capture, messaging, follow-up sequences, CRM organization, lead scoring, sales funnel optimization, and performance tracking.
@@ -6481,13 +11435,6 @@ Primary lead target:
 - Organizations with operational complexity
 - Businesses showing hiring, growth, expansion, or activity signals
 - Decision-makers such as founders, owners, CEOs, operations leaders, HR leaders, benefits leaders, sales leaders, and partnership leaders
-
-GOALL caller intelligence objective:
-- The scraper is not merely finding leads. It is preparing a caller to have a relevant business conversation.
-- Every GOALL lead should make it clear why the company is worth contacting, what appears to be happening inside the business now, why leadership may care about retention, hiring, workforce stability, benefits, or growth, and what opening line the caller should use.
-- Always produce a concise Lead Intelligence Summary in plain English.
-- Always produce a Recommended First Call Angle that a caller can read directly or lightly personalize.
-- The recommended angle should reference a real signal when available, such as expansion, hiring, employee count, leadership signal, active LinkedIn/company activity, job postings, reviews, or operational growth.
 
 GOALL Arizona priority industries:
 ${GOALL_PRIORITY_INDUSTRIES_ARIZONA.map(v=>`- ${v}`).join('\n')}
@@ -6579,8 +11526,6 @@ For each lead, collect and structure:
 4. Public presence: website, LinkedIn, Google
 5. Indicators of operational complexity
 6. Best available decision-maker contact path
-7. Plain-English caller intelligence summary
-8. Specific first-call opening angle
 
 SEARCH PROCESS - follow in order:
 1. Search company name + city/state
@@ -6590,17 +11535,14 @@ SEARCH PROCESS - follow in order:
 5. Search LinkedIn people / likely decision-makers
 6. Check Google Business
 7. Scan for news, hiring, activity, expansion, funding, operations, and growth signals
-8. Check hiring pages, public job postings, directories, business listings, and credible public sources for employee count or employee range
-9. Check for workforce pain signals such as recruiting-heavy language, staffing difficulty, turnover, short-staffed reviews, burnout, scheduling issues, or heavy technician/crew hiring
-10. Compile structured outputs
+8. Compile structured outputs
 
 Source priority:
 1. Official website
 2. LinkedIn company page
 3. Google Business listing
 4. News / press mentions
-5. Hiring pages / job postings
-6. Secondary directories and business listings
+5. Secondary directories
 
 Accuracy rules:
 - Only include information that is directly observed, clearly stated, or strongly supported by multiple signals.
@@ -6649,58 +11591,10 @@ linkedin_personal_url:
 
 linkedin_company_url:
 [company LinkedIn URL or fallback text]
-
-estimated_employee_count:
-[exact count or conservative range; blank only when no reasonable estimate exists]
-
-employee_count_confidence:
-[high / medium / low / unknown]
-
-employee_count_note:
-[brief note explaining source or why unknown]
-
-growth_signals:
-[new offices, expansion, services, markets, contracts, hiring surges, awards, or "No specific growth signal found yet."]
-
-leadership_signals:
-[current/recent CEO, COO, President, Owner, GM, VP Ops, HR Director, Benefits Manager, Sales Director, Office Manager, or "No named leadership signal found yet."]
-
-workforce_pain_signals:
-[hiring difficulty, recruiting, staffing pressure, reviews, burnout, scheduling, retention/benefits relevance, or "No clear workforce pain signal found yet."]
-
-engagement_activity_signals:
-[LinkedIn activity, website/news/community/company activity, recent announcements, or "Limited public engagement/activity signal found."]
-
-decision_maker_name:
-[name or blank]
-
-decision_maker_title:
-[title or blank]
-
-decision_maker_email:
-[email or blank]
-
-decision_maker_phone:
-[phone or blank]
-
-decision_maker_linkedin:
-[LinkedIn profile or blank]
-
-company_linkedin:
-[LinkedIn company page or blank]
-
-goall_intelligence_note:
-[concise plain-English Lead Intelligence Summary covering company overview, employee estimate, growth, leadership, workforce/hiring signals, why GOALL may be relevant, missing data, and first-call approach]
-
-recommended_first_call_angle:
-[one specific opening line the caller can use naturally]
-
-missing_data:
-[caller-critical missing data, or "No major caller-critical gaps."]
 `.trim();
 
 function parseLeadFieldOutputs(text){
-  const fields=['company_payload','company_google_raw','company_signals_raw','company_news_raw','linkedin_personal_url','linkedin_company_url','estimated_employee_count','employee_count_confidence','employee_count_note','growth_signals','leadership_signals','workforce_pain_signals','engagement_activity_signals','decision_maker_name','decision_maker_title','decision_maker_email','decision_maker_phone','decision_maker_linkedin','company_linkedin','goall_intelligence_note','recommended_first_call_angle','missing_data'];
+  const fields=['company_payload','company_google_raw','company_signals_raw','company_news_raw','linkedin_personal_url','linkedin_company_url'];
   const out={};
   fields.forEach((field,idx)=>{
     const next=fields[idx+1];
@@ -6746,7 +11640,7 @@ function assertRequiredLeadFieldIds(ids,required){
 }
 
 async function updateGhlLeadFields(contactId,fields){
-  const ids = await resolveLeadFieldIds().catch(()=>GHL_LEAD_FIELD_IDS);
+  const ids = await resolveLeadFieldIds().catch(()=>({}));
   const customFields = leadCustomFieldPayloads(ids,fields);
   if(!contactId || !customFields.length) return {updated:false, reason:contactId?'No lead custom field IDs configured':'No contactId provided'};
   const data=await ghlStrict('PUT',`/contacts/${contactId}`,{customFields});
@@ -6784,12 +11678,19 @@ async function verifyGhlLeadScoreField(contactId,expectedScore,ids){
 }
 
 let leadFieldIdCache=null;
-async function resolveLeadFieldIds(){
-  if(leadFieldIdCache) return leadFieldIdCache;
+let leadFieldIdPromise=null;
+async function discoverLeadFieldIds(){
   const resolved={...GHL_LEAD_FIELD_IDS};
+  const fields=await fetchGhlCustomFields();
+  // Railway can retain a deleted/recreated custom-field id. Validate every configured
+  // id first, then rediscover by safe field name so one stale id cannot block 200 imports.
+  for(const [key,id] of Object.entries(resolved)){
+    if(!id) continue;
+    const configured=fields.find(f=>String(ghlCustomFieldId(f))===String(id));
+    if(!configured || (key==='lead_score' && !isSafeLeadScoreField(configured))) resolved[key]='';
+  }
   const missing=Object.entries(resolved).filter(([,id])=>!id);
-  if(missing.length || resolved.lead_score){
-    const fields=await fetchGhlCustomFields();
+  if(missing.length){
     for(const [key] of missing){
       const wantedKey=GHL_LEAD_FIELD_KEYS[key];
       const wantedName=key.replace(/_/g,' ').toLowerCase();
@@ -6810,13 +11711,17 @@ async function resolveLeadFieldIds(){
       });
       if(found) resolved[key]=ghlCustomFieldId(found);
     }
-    if(resolved.lead_score){
-      const scoreField=fields.find(f=>String(ghlCustomFieldId(f))===String(resolved.lead_score));
-      if(!scoreField || !isSafeLeadScoreField(scoreField)) resolved.lead_score='';
-    }
   }
   leadFieldIdCache=resolved;
   return resolved;
+}
+
+async function resolveLeadFieldIds(){
+  if(leadFieldIdCache) return leadFieldIdCache;
+  if(!leadFieldIdPromise){
+    leadFieldIdPromise=discoverLeadFieldIds().finally(()=>{ leadFieldIdPromise=null; });
+  }
+  return leadFieldIdPromise;
 }
 
 async function assertGoallLeadScoreField(ids){
@@ -7191,9 +12096,14 @@ function resolveGoallLeadSearchPlan(body={}){
   const allPriority=leadProfile==='westwood'
     ? (mode.includes('all') || /\bwestwood|priority|leadership development|private businesses|businesses|companies\b/i.test(combined||'businesses')) && !explicitIndustries.length
     : mode.includes('all') || wantsAllGoallIndustries(combined) || (!explicitIndustries.length && /business|company|employer|goall|higher/i.test(combined||'businesses'));
-  const industries=allPriority
+  let industries=allPriority
     ? (leadProfile==='westwood'?WESTWOOD_PRIORITY_INDUSTRIES:GOALL_PRIORITY_INDUSTRIES_ARIZONA)
     : (explicitIndustries.length?explicitIndustries:[organizationType||'businesses']);
+  const batchIndex=Math.max(0,Number(body.goallBatchIndex)||0);
+  if(allPriority && leadProfile==='goall' && industries.length>GOALL_LEAD_INDUSTRIES_PER_RUN){
+    const start=(batchIndex*GOALL_LEAD_INDUSTRIES_PER_RUN)%industries.length;
+    industries=Array.from({length:GOALL_LEAD_INDUSTRIES_PER_RUN},(_,offset)=>industries[(start+offset)%industries.length]);
+  }
   const market=normalizeGoallMarket(body.market||body.location||body.cityState||'',combined,leadProfile);
   const employeeMinimum=donorValue(body.employeeMinimum||body.minimumEmployees||body.employees)||(leadProfile==='westwood'?25:GOALL_COMPANY_EMPLOYEE_MINIMUM);
   const limit=leadLimitValue(body.limit);
@@ -7214,6 +12124,7 @@ function resolveGoallLeadSearchPlan(body={}){
     tag:leadProfile==='westwood'?'limitless_enrich':normalizeLeadTag(body.tag||(!allPriority&&industries.length===1?industries[0]:'goall priority')),
     cities:leadProfile==='westwood'&&/\bidaho\b/i.test(market)?WESTWOOD_IDAHO_CITIES:(/\barizona\b/i.test(market)?GOALL_ARIZONA_CITIES:[]),
     fastSearch:/^(1|true|yes)$/i.test(String(body.fastSearch||body.fast_search||'')),
+    batchIndex,
     leadProfile,
     leadBrand:leadProfile==='westwood'?'Westwood':'GOALL'
   };
@@ -7238,8 +12149,6 @@ function reviewCountFromLead(p={}){
 function scoreGoallFit(p={}){
   const industry=String(p.aiExactIndustry||p.industry||p.organizationType||p.cause||'').toLowerCase();
   const text=[industry,p.organizationType,p.primaryService,p.operationalIndicators,p.donorEstimateBasis,p.employeeEstimateBasis,Array.isArray(p.evidenceSignals)?p.evidenceSignals.join(' '):p.evidenceSignals].filter(Boolean).join(' ').toLowerCase();
-  const intel=buildGoallIntelligenceProfile(p,industry||'business');
-  const signalText=[text,intel.signals.growth,intel.signals.workforce,intel.signals.engagement,intel.employee.note].join(' ').toLowerCase();
   let score=45;
   const preferred=/trucking|construction|electrical|hvac|plumbing|law|chiropractic|medical|manufactur|staffing|professional|home care|roof|weld|logistics|dental|insurance|accounting/.test(text);
   if(preferred) score+=18;
@@ -7247,11 +12156,7 @@ function scoreGoallFit(p={}){
   if(validEmail(p.email)) score+=8;
   if(validPhone(p.phone)) score+=8;
   if(p.decisionMakerName||p.decisionMakerTitle) score+=8;
-  if(/multiple|locations|fleet|dispatch|crew|staff|team|hiring|careers|warehouse|service teams|employees/.test(signalText)) score+=10;
-  if(intel.employee.count) score+=8;
-  if(/hiring|job postings?|careers|technicians?|recruit|staffing|short.?staffed|turnover|burnout|scheduling|overwhelmed/.test(signalText)) score+=8;
-  if(/expanded|expansion|new location|opened|opening|new office|new market|contract|award|fastest growing|best places to work/.test(signalText)) score+=8;
-  if(/linkedin|post|announcement|community|news|active website|google reviews?/.test(signalText)) score+=5;
+  if(/multiple|locations|fleet|dispatch|crew|staff|team|hiring|careers|warehouse|service teams|employees/.test(text)) score+=10;
   const reviews=reviewCountFromLead(p);
   if(reviews>=100) score+=8;
   else if(reviews>=25) score+=5;
@@ -7261,9 +12166,6 @@ function scoreGoallFit(p={}){
     preferred?'priority GOALL industry':'general business fit',
     p.website?'active website':'website unclear',
     validEmail(p.email)||validPhone(p.phone)?'reachable contact path':'no reachable contact path',
-    intel.employee.count?`employee estimate ${intel.employee.count}`:'employee count unclear',
-    intel.signals.growth && !/^No specific/i.test(intel.signals.growth)?'growth signal found':'',
-    intel.signals.workforce && !/^No clear/i.test(intel.signals.workforce)?'workforce signal found':'',
     reviews?`${reviews} Google reviews`:'',
     p.decisionMakerName||p.decisionMakerTitle?'decision-maker signal':''
   ].filter(Boolean).join('; ');
@@ -7275,27 +12177,25 @@ function leadScoreFromGoallFit(p={}){
   const c=leadContactability(p);
   const industryText=String([p.aiExactIndustry,p.industry,p.organizationType,p.primaryService,p.cause].filter(Boolean).join(' ')).toLowerCase();
   const signalText=String([p.operationalIndicators,p.donorEstimateBasis,p.employeeEstimateBasis,p.growthActivity,p.hiringActivity,p.careersPage,p.goallFitReason,Array.isArray(p.evidenceSignals)?p.evidenceSignals.join(' '):p.evidenceSignals].filter(Boolean).join(' ')).toLowerCase();
-  const intel=buildGoallIntelligenceProfile(p,industryText||'business');
-  const employeeCount=donorValue(intel.employee.numeric)||employeeEstimateMinimum(intel.employee.count);
   const highestIndustries=/trucking|hvac|plumbing|electrical|welding|construction|roofing|manufactur|law office|chiropractic|medical|dental|staffing|home care|logistics|commercial cleaning|security|fire protection/.test(industryText);
   const alignedIndustries=highestIndustries || /accounting|insurance|wealth|engineering|architecture|property management|auto repair|collision|equipment rental|physical therapy|behavioral health|veterinary/.test(industryText);
-  const employeeSignals=!!intel.employee.count || /10\+|employees|staff|team|crew|fleet|dispatch|payroll|benefit|multiple locations|hiring|careers|warehouse|commercial|field teams|service teams/.test(signalText);
+  const employeeSignals=/10\+|employees|staff|team|crew|fleet|dispatch|payroll|benefit|multiple locations|hiring|careers|warehouse|commercial|field teams|service teams/.test(signalText);
   const decisionMakerFound=!!(p.decisionMakerName||p.linkedinPersonalUrl);
   const strongContact=c.contactabilityStatus==='full_contactability';
   const reachable=!!(c.hasEmail||c.hasPhone);
-  const strongActivity=employeeSignals || reviewCountFromLead(p)>=100 || /multiple locations|hiring|careers|commercial|fleet|dispatch|crew|team/.test(signalText) || !/^No specific/i.test(intel.signals.growth) || !/^No clear/i.test(intel.signals.workforce);
+  const strongActivity=employeeSignals || reviewCountFromLead(p)>=100 || /multiple locations|hiring|careers|commercial|fleet|dispatch|crew|team/.test(signalText);
   const weakSignals=/solo|sole proprietor|one person|very small|weak|unclear|missing website|no website|low-fit|low fit/.test(signalText);
   let leadScore=3;
   let leadScoreReason='Score 3 because the business appears relevant, but decision-maker, employee-size, or contact evidence is incomplete.';
-  if(highestIndustries && decisionMakerFound && strongContact && strongActivity && fit>=78 && (employeeSignals || employeeCount>=10)){
+  if(highestIndustries && decisionMakerFound && strongContact && strongActivity && fit>=78){
     leadScore=1;
-    leadScoreReason='Score 1 because the business is strongly GOALL-aligned, has a verified decision-maker signal, full contactability, and meaningful employee, growth, hiring, or workforce evidence.';
+    leadScoreReason='Score 1 because the business is strongly GOALL-aligned, has a verified decision-maker signal, full contactability, and meaningful activity or employee-size evidence.';
   }else if(highestIndustries && reachable && fit>=65){
     leadScore=2;
-    leadScoreReason='Score 2 because the business is strongly aligned and reachable, but decision-maker, employee-size, or workforce evidence still needs confirmation.';
+    leadScoreReason='Score 2 because the business is strongly aligned and reachable, but decision-maker or employee-size evidence still needs confirmation.';
   }else if(alignedIndustries && reachable && fit>=58){
     leadScore=2;
-    leadScoreReason='Score 2 because the business is in an aligned industry and appears active, but full contactability, decision-maker, employee-size, or workforce evidence is not fully verified.';
+    leadScoreReason='Score 2 because the business is in an aligned industry and appears active, but full contactability, decision-maker, or employee-size evidence is not fully verified.';
   }else if(fit>=48 && !weakSignals){
     leadScore=3;
     leadScoreReason='Score 3 because the business may fit GOALL, but the current evidence is incomplete.';
@@ -7479,217 +12379,6 @@ function leadDomain(value){
   }
 }
 
-function leadArrayText(value){
-  if(Array.isArray(value)) return value.filter(Boolean).map(v=>String(v).trim()).filter(Boolean).join('; ');
-  return String(value||'').trim();
-}
-
-function firstLeadValue(...values){
-  for(const value of values){
-    const text=leadArrayText(value);
-    if(text && !/^(unknown|unclear|none|null|undefined|n\/a)$/i.test(text)) return text;
-  }
-  return '';
-}
-
-function employeeCountBand(n){
-  const value=Number(n)||0;
-  if(value>=500) return '500+';
-  if(value>=250) return '250-499';
-  if(value>=100) return '100-249';
-  if(value>=50) return '50-99';
-  if(value>=25) return '25-49';
-  if(value>=10) return '10-24';
-  if(value>0) return '1-9';
-  return '';
-}
-
-function employeeEstimateMinimum(value){
-  const raw=String(value||'');
-  const range=raw.match(/\b(\d{1,5})\s*(?:-|to|–)\s*(\d{1,5})\b/);
-  if(range) return Number(range[1])||0;
-  const plus=raw.match(/\b(\d{1,5})\s*\+\b/);
-  if(plus) return Number(plus[1])||0;
-  return donorValue(raw);
-}
-
-function goallEmployeeEstimate(p={}){
-  const rawEmployeeValue=firstLeadValue(
-    p.estimatedEmployeeCount,
-    p.estimated_employee_count,
-    p.scrapedNumberOfEmployees,
-    p.scraped_number_of_employees,
-    p.employeeCount,
-    p.employees,
-    p.linkedinEmployeeCount,
-    p.linkedin_employee_count,
-    p.linkedinCompanyEmployeeCount,
-    p.approximateDonors,
-    p.estimatedDonors,
-    p.donorCount
-  );
-  const rangeMatch=String(rawEmployeeValue||'').match(/\b(\d{1,5})\s*(?:-|to|–)\s*(\d{1,5})\b|\b(\d{1,5})\s*\+\b/);
-  const band=firstLeadValue(
-    p.linkedinCompanySizeBand,
-    p.linkedin_company_size_band,
-    p.employeeCountRange,
-    p.employee_count_range,
-    p.companySizeBand
-  ) || (rangeMatch?rangeMatch[0]:'');
-  const exact=rangeMatch?0:donorValue(rawEmployeeValue);
-  const basis=firstLeadValue(
-    p.employeeCountNote,
-    p.employee_count_note,
-    p.employeeEstimateBasis,
-    p.donorEstimateBasis,
-    p.linkedinMatchNotes,
-    p.linkedin_match_notes,
-    Array.isArray(p.evidenceSignals)?p.evidenceSignals.join('; '):p.evidenceSignals,
-    p.googleRaw
-  );
-  if(exact){
-    return {
-      count:String(exact),
-      confidence:firstLeadValue(p.employeeCountConfidence,p.employee_count_confidence) || (p.linkedinEmployeeCount||p.linkedin_employee_count?'high':'medium'),
-      note:basis || 'Employee count estimate came from public scrape/enrichment signals.',
-      numeric:exact
-    };
-  }
-  if(band){
-    return {
-      count:band,
-      confidence:firstLeadValue(p.employeeCountConfidence,p.employee_count_confidence) || 'medium',
-      note:basis || 'Exact employee count was not found, so the available public company-size band is stored.',
-      numeric:0
-    };
-  }
-  const signalText=String([p.organizationType,p.industry,p.operationalIndicators,p.hiringActivity,p.careersPage,leadArrayText(p.evidenceSignals)].filter(Boolean).join(' ')).toLowerCase();
-  let inferred='';
-  if(/\bfleet|warehouse|multiple locations|dispatch|crews?|technicians?|commercial|manufacturing|staffing|logistics|trucking\b/.test(signalText)) inferred='10-49';
-  if(/\bmultiple locations|branch|branches|regional|large fleet|distribution|factory|plant\b/.test(signalText)) inferred='25-99';
-  if(inferred){
-    return {
-      count:inferred,
-      confidence:'low',
-      note:'Exact employee count was not public. Range is inferred from public operating signals such as crews, locations, fleet, hiring, or commercial operations.',
-      numeric:0
-    };
-  }
-  return {
-    count:'',
-    confidence:'unknown',
-    note:'No reasonable employee count estimate was found from website, listing, LinkedIn, hiring, or public source signals.',
-    numeric:0
-  };
-}
-
-function goallLeadSignals(p={},employee={}){
-  const evidence=leadArrayText(p.evidenceSignals);
-  const growth=firstLeadValue(
-    p.growthSignals,
-    p.growth_signals,
-    p.growthActivity,
-    p.operationalActivity,
-    p.eventsOrCampaigns,
-    p.newsRaw,
-    p.news_raw_last_60_days
-  );
-  const leadership=firstLeadValue(
-    p.leadershipSignals,
-    p.leadership_signals,
-    p.leadershipChangeSummary,
-    p.leadership_change_summary,
-    p.decisionMakerName?`${p.decisionMakerName}${p.decisionMakerTitle?' - '+p.decisionMakerTitle:''}`:'',
-    p.linkedinCurrentTitle
-  );
-  const workforce=firstLeadValue(
-    p.workforcePainSignals,
-    p.workforce_pain_signals,
-    p.workforceStabilitySignal,
-    p.workforce_stability_signal,
-    p.hiringActivity,
-    p.careersPage,
-    p.reviewSentimentTrend,
-    p.operationalIndicators
-  );
-  const engagement=firstLeadValue(
-    p.engagementActivitySignals,
-    p.engagement_activity_signals,
-    p.socialActivity,
-    p.linkedinNotes,
-    p.linkedin_notes,
-    p.linkedinCompanyDescription,
-    p.googleReviewCount||p.google_rating?`${p.googleReviewCount||''} Google reviews${p.googleRating?' / '+p.googleRating+' rating':''}`:'',
-    p.website?'Active website found':''
-  );
-  const missing=[
-    employee.count?'':'employee count estimate',
-    p.decisionMakerName?'':'decision-maker name',
-    validEmail(p.email)?'':'decision-maker or company email',
-    validPhone(p.phone)?'':'phone',
-    p.linkedinCompanyUrl||p.linkedinOrganizationUrl?'':'company LinkedIn page',
-    growth?'':'recent growth signal'
-  ].filter(Boolean);
-  return {
-    growth:growth || 'No specific growth event found yet.',
-    leadership:leadership || 'No named leadership signal found yet.',
-    workforce:workforce || 'No clear hiring, retention, or workforce pain signal found yet.',
-    engagement:engagement || 'Limited public engagement/activity signal found.',
-    evidence:evidence || '',
-    missing
-  };
-}
-
-function buildGoallFirstCallAngle(p={},employee={},signals={}){
-  const name=p.organizationName||p.name||'the company';
-  const growth=signals.growth && !/^No specific/i.test(signals.growth) ? signals.growth : '';
-  const workforce=signals.workforce && !/^No clear/i.test(signals.workforce) ? signals.workforce : '';
-  const employeePhrase=employee.count ? `${employee.count} employees` : 'an employee base';
-  if(p.recommendedFirstCallAngle||p.recommended_first_call_angle) return p.recommendedFirstCallAngle||p.recommended_first_call_angle;
-  if(growth || workforce){
-    const hook=growth || workforce;
-    return `I noticed ${name} appears to have ${employeePhrase} and ${hook}. We work with growing employers that are trying to retain good people while controlling benefits and workforce costs.`;
-  }
-  return `I was looking at ${name} and saw enough employee-base and operating activity to think retention, hiring, benefits costs, or workforce stability may be relevant. We help employers make that easier to manage.`;
-}
-
-function buildGoallIntelligenceProfile(p={},exactIndustry='business'){
-  const employee=goallEmployeeEstimate(p);
-  const signals=goallLeadSignals(p,employee);
-  const contactability=leadContactability(p);
-  const company=p.organizationName||p.name||'Unnamed company';
-  const overview=`${company} is a ${exactIndustry||p.industry||p.organizationType||'business'}${p.location?' in '+p.location:''}.`;
-  const firstCall=buildGoallFirstCallAngle(p,employee,signals);
-  const missing=signals.missing.length?signals.missing.join(', '):'No major caller-critical gaps.';
-  const relevance=[
-    employee.count?`employee base estimated at ${employee.count}`:'employee count not yet verified',
-    signals.growth && !/^No specific/i.test(signals.growth)?'growth/activity signal found':'growth signal weak',
-    signals.workforce && !/^No clear/i.test(signals.workforce)?'workforce or hiring signal found':'workforce pain unclear',
-    contactability.contactabilityStatus.replace(/_/g,' ')
-  ].join('; ');
-  const note=[
-    `Company overview: ${overview}`,
-    `Employee count estimate: ${employee.count||'unknown'} (${employee.confidence}). ${employee.note}`,
-    `Growth signals discovered: ${signals.growth}`,
-    `Leadership signals discovered: ${signals.leadership}`,
-    `Workforce or hiring signals discovered: ${signals.workforce}`,
-    `Engagement/activity signals: ${signals.engagement}`,
-    `Why GOALL may be relevant: ${relevance}.`,
-    `Recommended first-call approach: ${firstCall}`,
-    `Missing data: ${missing}`
-  ].join('\n');
-  return {employee,signals,firstCall,missing,note,overview};
-}
-
-function strongGoallManualReviewLead(p={},intel=buildGoallIntelligenceProfile(p,p.aiExactIndustry||p.industry||p.organizationType||'business')){
-  const hasGrowth=intel.signals.growth && !/^No specific/i.test(intel.signals.growth);
-  const hasWorkforce=intel.signals.workforce && !/^No clear/i.test(intel.signals.workforce);
-  const hasLeadership=intel.signals.leadership && !/^No named/i.test(intel.signals.leadership);
-  const hasEmployees=!!intel.employee.count && intel.employee.confidence!=='unknown';
-  const hasPublicFootprint=!!(p.website||p.googleMapsUrl||p.googleRaw||p.linkedinCompanyUrl||p.linkedinOrganizationUrl);
-  return hasPublicFootprint && hasEmployees && (hasGrowth || hasWorkforce || hasLeadership);
-}
-
 function leadCompanySummary(p,exactIndustry,contactability){
   const name=p.organizationName||p.name||'Unnamed business';
   const location=p.location||[p.city,p.state].filter(Boolean).join(', ')||'unclear';
@@ -7708,19 +12397,8 @@ function leadCustomFieldsFromProspect(p){
   const name=p.organizationName||p.name||'';
   const donorCount=donorValue(p.approximateDonors||p.estimatedDonors||p.donorCount);
   const exactIndustry=String(p.aiExactIndustry||p.ai_exact_industry||p.exactIndustry||p.industry||p.cause||p.primaryService||'unclear').trim()||'unclear';
-  const isGoall=(p.leadProfile||'').toLowerCase()!=='westwood';
-  const automation=isGoall?mapGoallAutomationTag(p):{};
-  const normalizedProspect={
-    ...p,
-    email:p.email||p.decisionMakerEmail||p.decision_maker_email||'',
-    phone:p.phone||p.decisionMakerPhone||p.decision_maker_phone||'',
-    linkedinPersonalUrl:p.linkedinPersonalUrl||p.decisionMakerLinkedin||p.decisionMakerLinkedIn||p.decision_maker_linkedin||'',
-    linkedinCompanyUrl:p.linkedinCompanyUrl||p.companyLinkedin||p.companyLinkedIn||p.company_linkedin||''
-  };
-  p=normalizedProspect;
+  const automation=(p.leadProfile||'').toLowerCase()==='westwood'?{}:mapGoallAutomationTag(p);
   const contactability=leadContactability(p);
-  const goallIntel=isGoall?buildGoallIntelligenceProfile(p,exactIndustry):null;
-  const manualReviewOnly=isGoall && !contactability.importable && strongGoallManualReviewLead(p,goallIntel);
   const now=new Date().toISOString();
   const processedAt=p.leadLastProcessedAt||p.lead_last_processed_at||now;
   const ingestedAt=p.leadIngestedAt||p.lead_ingested_at||processedAt;
@@ -7748,7 +12426,7 @@ function leadCustomFieldsFromProspect(p){
   ].filter(Boolean);
   const signalSummary=positiveSignals.length?positiveSignals.join('; '):'Limited public signals found.';
   const topIndicators=positiveSignals.slice(0,5).join('\n');
-  const salesAngle=goallIntel?.firstCall||p.nextOutreachAngle||p.recommendedOutreachAngle||'Position GOALL around growth, follow-up, employee-base complexity, and turning missed opportunities into pipeline.';
+  const salesAngle=p.nextOutreachAngle||p.recommendedOutreachAngle||'Position GOALL around growth, follow-up, employee-base complexity, and turning missed opportunities into pipeline.';
   const contactPayload=[
     `Decision maker: ${p.decisionMakerName||'not verified'}`,
     `Title: ${p.decisionMakerTitle||p.linkedinCurrentTitle||'unclear'}`,
@@ -7787,19 +12465,15 @@ function leadCustomFieldsFromProspect(p){
     `GOALL fit reason: ${p.goallFitReason||'unclear'}`,
     `Email source: ${p.emailSource||'unclear'} (${p.emailQuality||classifyEmail(p.email)})`,
     `RocketReach: ${p.rocketReachStatus||p.rocketReach?.error||p.rocketReach?.data?.rawPreview||'not available'}`,
-    `Employee estimate: ${goallIntel?.employee?.count||p.estimatedEmployeeCount||p.estimated_employee_count||'unclear'}`,
-    `Employee estimate confidence: ${goallIntel?.employee?.confidence||p.employeeCountConfidence||p.employee_count_confidence||'unclear'}`,
-    `Employee estimate basis: ${goallIntel?.employee?.note||p.donorEstimateBasis||p.employeeEstimateBasis||'unclear'}`,
-    `Growth signals: ${goallIntel?.signals?.growth||p.growthSignals||p.growth_signals||p.growthActivity||'unclear'}`,
-    `Workforce pain signals: ${goallIntel?.signals?.workforce||p.workforcePainSignals||p.workforce_pain_signals||p.workforceStabilitySignal||'unclear'}`,
-    `Recommended first call angle: ${goallIntel?.firstCall||p.nextOutreachAngle||'unclear'}`,
+    `Employee estimate basis: ${p.donorEstimateBasis||p.employeeEstimateBasis||'unclear'}`,
+    `Next outreach angle: ${p.nextOutreachAngle||'unclear'}`,
     `Confidence: ${p.confidence||'unclear'}`
   ].filter(Boolean).join('\n');
-  const fields = {
+  return {
     lead_source_system:'Grace Intelligence',
     lead_ingested_at:ingestedAt,
     lead_ingestion_id:enrichmentRunId,
-    lead_processing_status:contactability.importable?'ready_for_import':(manualReviewOnly?'manual_review':'rejected'),
+    lead_processing_status:contactability.importable?'ready_for_import':'rejected',
     painpoint:p.painpoint||p.painPoint||salesAngle,
     call_transcript:p.callTranscript||p.call_transcript||'',
     lead_dedupe_key:dedupeKey,
@@ -7838,7 +12512,7 @@ function leadCustomFieldsFromProspect(p){
     lead_score:String(p.leadScore||p.lead_score||''),
     lead_score_reason:p.leadScoreReason||p.lead_score_reason||'',
     lead_scored_at:p.leadScoredAt||p.lead_scored_at||processedAt,
-    lead_rejected_reason:contactability.importable||manualReviewOnly?'':(contactability.rejectionReason||'missing_email_and_phone'),
+    lead_rejected_reason:contactability.importable?'':(contactability.rejectionReason||'missing_email_and_phone'),
     lead_scoring_version:p.leadScoringVersion||p.lead_scoring_version||'goall-v2-contactability-company-person',
     approximat_donor_count:donorCount?String(donorCount):'unclear',
     linkedin_personal:p.linkedinPersonalUrl||p.decisionMakerLinkedIn||'',
@@ -7923,30 +12597,9 @@ function leadCustomFieldsFromProspect(p){
     needs_new_automation:automation.automationTag?String(!!automation.needsNewAutomation):'',
     suggested_new_automation_tag:automation.suggestedNewAutomationTag||''
   };
-  if(isGoall && goallIntel){
-    Object.assign(fields,{
-      estimated_employee_count:goallIntel.employee.count||'',
-      employee_count_confidence:goallIntel.employee.confidence||'unknown',
-      employee_count_note:goallIntel.employee.note||'',
-      growth_signals:goallIntel.signals.growth,
-      leadership_signals:goallIntel.signals.leadership,
-      workforce_pain_signals:goallIntel.signals.workforce,
-      engagement_activity_signals:goallIntel.signals.engagement,
-      decision_maker_name:p.decisionMakerName||'',
-      decision_maker_title:p.decisionMakerTitle||p.linkedinCurrentTitle||'',
-      decision_maker_email:contactability.email||'',
-      decision_maker_phone:contactability.phone||'',
-      decision_maker_linkedin:p.linkedinPersonalUrl||p.decisionMakerLinkedIn||'',
-      company_linkedin:p.linkedinCompanyUrl||p.linkedinOrganizationUrl||'',
-      goall_intelligence_note:goallIntel.note,
-      recommended_first_call_angle:goallIntel.firstCall,
-      missing_data:goallIntel.missing
-    });
-  }
-  return fields;
 }
 
-async function getOpportunityTarget(){
+async function resolveOpportunityTarget(){
   const data=await ghl('GET',`/opportunities/pipelines?locationId=${GHL_LOC}`);
   const pipelines=data.pipelines||data.data||[];
   if(GHL_OPPORTUNITY_PIPELINE_ID&&GHL_OPPORTUNITY_STAGE_ID){
@@ -7974,7 +12627,7 @@ async function getOpportunityTarget(){
     throw new Error(`No GHL opportunity pipeline matched "${GHL_OPPORTUNITY_PIPELINE_NAME}". Set GHL_OPPORTUNITY_PIPELINE_ID to the exact pipeline id in Railway. Available pipelines: ${available||'none returned'}`);
   }
   const stages=pipeline.stages||pipeline.pipelineStages||[];
-  const stage=stages.find(s=>{
+  const stage=stages.find(s=>GHL_OPPORTUNITY_STAGE_ID && String(s.id||s._id||'')===String(GHL_OPPORTUNITY_STAGE_ID)) || stages.find(s=>{
     const name=String(s.name||s.title||'').toLowerCase();
     return wantStage && name===wantStage;
   }) || stages.find(s=>{
@@ -7983,9 +12636,184 @@ async function getOpportunityTarget(){
   }) || {};
   if(!stage.id){
     const available=stages.map(s=>`${s.name||s.title||'Unnamed'} (${s.id||s._id||'no id'})`).slice(0,20).join(' | ');
-    throw new Error(`No GHL opportunity stage matched "${GHL_OPPORTUNITY_STAGE_NAME}" in pipeline "${pipeline.name||pipeline.title||pipeline.id}". Set GHL_OPPORTUNITY_STAGE_ID to the exact stage id in Railway. Available stages: ${available||'none returned'}`);
+    throw new Error(`No GHL opportunity stage matched "${GHL_OPPORTUNITY_STAGE_NAME}"${GHL_OPPORTUNITY_STAGE_ID?` or id ${GHL_OPPORTUNITY_STAGE_ID}`:''} in pipeline "${pipeline.name||pipeline.title||pipeline.id}". Set GHL_OPPORTUNITY_STAGE_ID to the exact stage id in Railway. Available stages: ${available||'none returned'}`);
   }
   return {pipelineId:pipeline.id,stageId:stage.id,pipelineName:pipeline.name||pipeline.title||'',stageName:stage.name||stage.title||''};
+}
+
+let opportunityTargetCache=null;
+let opportunityTargetPromise=null;
+async function getOpportunityTarget(){
+  if(opportunityTargetCache) return opportunityTargetCache;
+  if(!opportunityTargetPromise){
+    opportunityTargetPromise=resolveOpportunityTarget()
+      .then(target=>(opportunityTargetCache=target,target))
+      .finally(()=>{ opportunityTargetPromise=null; });
+  }
+  return opportunityTargetPromise;
+}
+
+async function getPartnerOpportunityTarget(){
+  const data=await ghl('GET',`/opportunities/pipelines?locationId=${GHL_LOC}`);
+  const pipelines=data.pipelines||data.data||[];
+  const pipeline=pipelines.find(p=>GHL_PARTNER_PIPELINE_ID
+    ? String(p.id||p._id||'')===String(GHL_PARTNER_PIPELINE_ID)
+    : String(p.name||p.title||'').trim().toLowerCase()===GHL_PARTNER_PIPELINE_NAME.toLowerCase());
+  if(!pipeline) throw new Error(`No GHL pipeline matched "${GHL_PARTNER_PIPELINE_NAME}". Create it or set GHL_PARTNER_PIPELINE_ID.`);
+  const stages=pipeline.stages||pipeline.pipelineStages||[];
+  const stage=stages.find(s=>GHL_PARTNER_STAGE_ID
+    ? String(s.id||s._id||'')===String(GHL_PARTNER_STAGE_ID)
+    : String(s.name||s.title||'').trim().toLowerCase()===GHL_PARTNER_STAGE_NAME.toLowerCase());
+  if(!stage) throw new Error(`No GHL stage matched "${GHL_PARTNER_STAGE_NAME}" in "${pipeline.name||pipeline.title}". Create it or set GHL_PARTNER_STAGE_ID.`);
+  return {pipelineId:pipeline.id||pipeline._id,stageId:stage.id||stage._id,pipelineName:pipeline.name||pipeline.title||'',stageName:stage.name||stage.title||''};
+}
+
+const GOALL_PARTNER_TYPES=[
+  'Employee Benefits Broker','Property & Casualty Agency','Life & Health Insurance Agency','General Insurance Brokerage',
+  'Voluntary Benefits Provider','Section 125 Provider','SIMRP Provider','Payroll Company','Staffing Agency','HR Consultant',
+  'Professional Association','Trade Organization','Industry Membership Organization','Conference Organizer','Referral Partner'
+];
+const GOALL_PRIORITY_ASSOCIATIONS=['SHRM','MGMA','AHA','AAHC','AGC','ABC','NAHB','ATA','NPTC','APA','ASA','NAPS','NARPM'];
+
+function partnerTypeFromLead(p={}){
+  const text=[p.partnerType,p.organizationType,p.industry,p.category,p.subcategory,p.organizationName,p.name].filter(Boolean).join(' ').toLowerCase();
+  if(/association|membership|society|chamber/.test(text)) return 'Professional Association';
+  if(/conference|expo|event organizer/.test(text)) return 'Conference Organizer';
+  if(/payroll|paychex|adp/.test(text)) return 'Payroll Company';
+  if(/staffing|recruit/.test(text)) return 'Staffing Agency';
+  if(/section\s*125|cafeteria plan/.test(text)) return 'Section 125 Provider';
+  if(/simrp/.test(text)) return 'SIMRP Provider';
+  if(/voluntary benefits/.test(text)) return 'Voluntary Benefits Provider';
+  if(/property.{0,3}casualty|commercial insurance|\bp&c\b/.test(text)) return 'Property & Casualty Agency';
+  if(/life|health insurance|medicare/.test(text)) return 'Life & Health Insurance Agency';
+  if(/benefits|employee benefit/.test(text)) return 'Employee Benefits Broker';
+  if(/insurance|brokerage|agency/.test(text)) return 'General Insurance Brokerage';
+  if(/hr consultant|human resources consult/.test(text)) return 'HR Consultant';
+  if(/trade organization/.test(text)) return 'Trade Organization';
+  return p.partnerType||'Referral Partner';
+}
+
+function partnerSourceUrls(p={}){
+  return [...new Set([
+    ...(Array.isArray(p.sourceUrls)?p.sourceUrls:String(p.sourceUrls||'').split(/[\n,]/)),
+    p.website,p.googleMapsUrl,p.google_maps_url,p.linkedinCompanyUrl,p.linkedinPersonalUrl,p.membershipUrl,p.eventsUrl,p.sponsorUrl,p.vendorUrl
+  ].map(v=>String(v||'').trim()).filter(v=>/^https?:\/\//i.test(v)))];
+}
+
+function partnerPotentialReach(p={},type=partnerTypeFromLead(p)){
+  const direct=donorValue(p.potentialReach||p.membershipSize||p.memberCount||p.attendeeCount||p.employerClients||p.businessClients);
+  if(direct) return direct;
+  const employees=donorValue(p.employeeCount||p.estimatedEmployeeCount||p.scrapedNumberOfEmployees||p.linkedinEmployeeCount||p.approximateDonors);
+  const reviews=donorValue(p.googleReviewCount||p.reviews);
+  if(/Association|Organization/.test(type)) return Math.max(employees?employees*100:0,reviews?reviews*20:0,500);
+  if(type==='Conference Organizer') return Math.max(employees?employees*75:0,reviews?reviews*15:0,250);
+  if(/Broker|Agency|Insurance|Benefits/.test(type)) return Math.max(employees?employees*18:0,reviews?reviews*6:0,50);
+  if(type==='Payroll Company'||type==='Staffing Agency') return Math.max(employees?employees*12:0,reviews?reviews*5:0,50);
+  return Math.max(employees?employees*8:0,reviews?reviews*4:0,25);
+}
+
+function scorePartnerFit(p={}){
+  const partnerType=partnerTypeFromLead(p);
+  const potentialReach=partnerPotentialReach(p,partnerType);
+  const sources=partnerSourceUrls(p);
+  const text=JSON.stringify(p).toLowerCase();
+  const audienceSize=Math.min(30,potentialReach>=10000?30:potentialReach>=2500?26:potentialReach>=500?21:potentialReach>=100?15:9);
+  const employerAccess=Math.min(25,/benefit|insurance|payroll|staffing|association|membership|trade organization/.test(partnerType.toLowerCase())?25:16);
+  const priority=GOALL_PRIORITY_ASSOCIATIONS.some(name=>new RegExp(`\\b${name.toLowerCase()}\\b`,'i').test(`${p.organizationName||p.name||''} ${p.website||''}`));
+  const trustCredibility=Math.min(20,(priority?20:0)||((p.googleRating||p.executiveLeadership||p.decisionMakerName||sources.length>=2)?16:10));
+  const easeOfPartnership=Math.min(15,(validEmail(p.email)||validPhone(p.phone)?8:3)+(/sponsor|vendor|partner|conference|events? director|membership director/.test(text)?7:3));
+  const growthPotential=Math.min(10,(/national|multi.?state|growth|expansion|annual conference/.test(text)?10:potentialReach>=500?8:5));
+  const partnershipFitScore=Math.min(100,audienceSize+employerAccess+trustCredibility+easeOfPartnership+growthPotential);
+  const reasonForScore=`Audience ${audienceSize}/30; employer access ${employerAccess}/25; trust/credibility ${trustCredibility}/20; ease of partnership ${easeOfPartnership}/15; growth potential ${growthPotential}/10. Estimated reach: ${potentialReach.toLocaleString()}.`;
+  const recommendedOutreachAngle=/Association|Organization|Conference/.test(partnerType)
+    ? 'Propose a member-value education, conference sponsorship, or preferred-vendor relationship that introduces GOALL to many employers at once.'
+    : 'Propose a referral or co-selling partnership that adds GOALL to the organization’s employer relationships without disrupting its core service.';
+  return {...p,leadProfile:'partners',partnerType,potentialReach,partnershipFitScore,reasonForScore,recommendedOutreachAngle,sources,sourceUrls:sources,researchSourceCount:sources.length,researchQuality:sources.length>=2?'supported':'needs second source'};
+}
+
+function partnerPreviewText(discovered={}){
+  const leads=(discovered.leads||[]).map(scorePartnerFit).sort((a,b)=>b.partnershipFitScore-a.partnershipFitScore||b.potentialReach-a.potentialReach);
+  return [
+    `Found ${leads.length} strategic partner prospect${leads.length===1?'':'s'}.`,
+    'Partner question: Could this organization help GOALL reach many employers?',
+    `Search: ${discovered.organizationType||'strategic partners'} | ${discovered.market||'United States'}`,
+    'Research standard: public information only; two supporting sources preferred; recent sources prioritized.',
+    '',
+    ...leads.map((p,i)=>`${i+1}. ${p.organizationName||p.name||'Unnamed organization'}\n   Partner type: ${p.partnerType}\n   Potential reach: ${p.potentialReach.toLocaleString()}\n   Partnership fit: ${p.partnershipFitScore}/100\n   Reason: ${p.reasonForScore}\n   Outreach: ${p.recommendedOutreachAngle}\n   Contact: ${p.decisionMakerName||'not identified'}${p.decisionMakerTitle?' - '+p.decisionMakerTitle:''} | ${p.email||'email unavailable'} | ${p.phone||'phone unavailable'}\n   Sources (${p.sourceUrls.length}): ${p.sourceUrls.join(', ')||'second-source research needed'}`),
+    '',
+    'Review and approve before pushing to GOALL Strategic Partners / New Limitless Lead Added.'
+  ].join('\n');
+}
+
+function partnerCustomFields(p={}){
+  const scored=scorePartnerFit(p);
+  return {
+    partner_type:scored.partnerType,
+    organization_size:String(p.organizationSize||p.employeeCount||p.estimatedEmployeeCount||p.linkedinEmployeeCount||''),
+    potential_reach:String(scored.potentialReach),
+    partnership_fit_score:String(scored.partnershipFitScore),
+    reason_for_score:scored.reasonForScore,
+    recommended_outreach_angle:scored.recommendedOutreachAngle,
+    source_urls:scored.sourceUrls.join('\n'),
+    lead_source_system:'GOALL Strategic Partner Prospecting',
+    date_added:p.dateAdded||new Date().toISOString(),
+    linkedin_url:p.linkedinPersonalUrl||p.linkedinCompanyUrl||p.linkedinUrl||'',
+    title:p.decisionMakerTitle||p.contactTitle||''
+  };
+}
+
+async function findPartnerOpportunity(contactId,target){
+  const data=await fetchGhlOpportunities({status:'open',limit:100}).catch(()=>({opportunities:[]}));
+  const opportunities=data.data?.opportunities||data.opportunities||[];
+  return opportunities.find(o=>opportunityContactId(o)===String(contactId)&&String(o.pipelineId||o.pipeline_id||o.pipeline?.id||'')===String(target.pipelineId))||null;
+}
+
+async function upsertGhlPartnerLead(raw={}){
+  const p=scorePartnerFit(sanitizeDecisionMaker(raw));
+  const target=await getPartnerOpportunityTarget();
+  const fields=partnerCustomFields(p);
+  const ids=await resolveLeadFieldIds().catch(()=>GHL_LEAD_FIELD_IDS);
+  const customFields=leadCustomFieldPayloads(ids,fields);
+  const duplicate=await findExistingGhlLeadDuplicate(p);
+  let contactId=duplicate?.id||'';
+  let updated=!!duplicate;
+  const contactPayload={
+    locationId:GHL_LOC,companyName:p.organizationName||p.name||'Unnamed partner',website:p.website||undefined,
+    email:validEmail(p.email)?p.email:undefined,phone:validPhone(p.phone)?p.phone:undefined,
+    city:p.city||undefined,state:p.state||undefined,source:'GOALL Strategic Partner Prospecting',
+    tags:['partner','GOALL Strategic Partner','Limitless Leads',p.partnerType],customFields:customFields.length?customFields:undefined
+  };
+  const decisionName=String(p.decisionMakerName||p.contactName||'').trim().split(/\s+/);
+  if(decisionName[0]){contactPayload.firstName=decisionName[0];contactPayload.lastName=decisionName.slice(1).join(' ')||undefined;}
+  if(contactId){
+    const {locationId,...updatePayload}=contactPayload;
+    await ghlStrict('PUT',`/contacts/${contactId}`,updatePayload);
+  }else{
+    const created=await ghlStrict('POST','/contacts',contactPayload);
+    contactId=(created.contact||created).id;
+  }
+  if(!contactId) throw new Error(`GHL contact upsert returned no contact id for ${p.organizationName||p.name||'partner'}`);
+  await ghlStrict('POST',`/contacts/${contactId}/tags`,{tags:contactPayload.tags}).catch(()=>{});
+  const note=[`Partner type: ${p.partnerType}`,`Potential reach: ${p.potentialReach}`,`Partnership fit: ${p.partnershipFitScore}/100`,p.reasonForScore,`Recommended outreach: ${p.recommendedOutreachAngle}`,`Sources: ${p.sourceUrls.join(', ')||'Needs second source'}`,p.membershipSize?`Membership size: ${p.membershipSize}`:'',p.geographicReach?`Geographic reach: ${p.geographicReach}`:'',p.conferenceInformation?`Conference: ${p.conferenceInformation}`:'',p.vendorOpportunities?`Vendor opportunities: ${p.vendorOpportunities}`:'',p.sponsorOpportunities?`Sponsor opportunities: ${p.sponsorOpportunities}`:'',p.benefitsEvidence?`Benefits evidence: ${p.benefitsEvidence}`:'',p.lifeInsuranceEvidence?`Life evidence: ${p.lifeInsuranceEvidence}`:'',p.commercialInsuranceEvidence?`Commercial evidence: ${p.commercialInsuranceEvidence}`:''].filter(Boolean).join('\n');
+  await ghlStrict('POST',`/contacts/${contactId}/notes`,{body:note}).catch(()=>{});
+  let opportunity=await findPartnerOpportunity(contactId,target);
+  if(!opportunity){
+    const created=await createGhlOpportunity({locationId:GHL_LOC,pipelineId:target.pipelineId,pipelineStageId:target.stageId,name:p.organizationName||p.name,status:'open',contactId,monetaryValue:p.potentialReach,source:'GOALL Strategic Partner Prospecting'});
+    opportunity=created.opportunity||created;
+  }
+  return {name:p.organizationName||p.name,contactId,updated,opportunity,pipelineName:target.pipelineName,stageName:target.stageName,partnershipFitScore:p.partnershipFitScore,potentialReach:p.potentialReach};
+}
+
+async function importApprovedPartnerLeads(body={}){
+  const leads=(Array.isArray(body.leads)?body.leads:[]).map(scorePartnerFit);
+  if(!leads.length) throw new Error('No approved partner leads were provided for import.');
+  const created=[],failed=[];
+  await mapWithConcurrency(leads,GOALL_LEAD_IMPORT_CONCURRENCY,async lead=>{
+    try{created.push(await upsertGhlPartnerLead(lead));}catch(e){failed.push({name:lead.organizationName||lead.name,error:e.message});}
+  });
+  const updated=created.filter(x=>x.updated).length;
+  const content=[`Pushed ${created.length} approved strategic partner${created.length===1?'':'s'} to GHL.`,updated?`Updated ${updated} existing contact${updated===1?'':'s'} instead of creating duplicates.`:'','Pipeline: GOALL Strategic Partners','Stage: New Limitless Lead Added',failed.length?`Failed: ${failed.length}`:''].filter(Boolean).join('\n');
+  return {ok:true,created,failed,content};
 }
 
 function normalizeOutscraperPlace(row,organizationType,employeeMinimum,market){
@@ -8048,6 +12876,34 @@ function normalizeOutscraperPlace(row,organizationType,employeeMinimum,market){
   };
 }
 
+const OUTSCRAPER_POLL_INTERVAL_MS = Number(process.env.OUTSCRAPER_POLL_INTERVAL_MS) || 3000;
+const OUTSCRAPER_POLL_TIMEOUT_MS = Number(process.env.OUTSCRAPER_POLL_TIMEOUT_MS) || 90000;
+const OUTSCRAPER_SUBMIT_TIMEOUT_MS = Number(process.env.OUTSCRAPER_SUBMIT_TIMEOUT_MS) || 14000;
+
+function sleep(ms){
+  return new Promise(resolve=>setTimeout(resolve,ms));
+}
+
+// Polls an Outscraper async request until it finishes (Success/Error) or the
+// poll budget runs out. Outscraper's own guidance is to submit async and poll
+// rather than holding a single connection open, since Maps searches can take
+// well over the old 14s synchronous timeout depending on result volume.
+async function pollOutscraperRequest(requestId,resultsLocation,outscraperKey){
+  const pollUrl=resultsLocation||`https://api.outscraper.com/requests/${encodeURIComponent(requestId)}`;
+  const deadline=Date.now()+OUTSCRAPER_POLL_TIMEOUT_MS;
+  while(Date.now()<deadline){
+    await sleep(OUTSCRAPER_POLL_INTERVAL_MS);
+    const response=await fetchWithTimeout(pollUrl,{headers:{'X-API-KEY':outscraperKey}},OUTSCRAPER_SUBMIT_TIMEOUT_MS,'Level 1 map/business search poll').catch(e=>null);
+    if(!response) continue;
+    const data=await readJsonResponse(response);
+    const status=String(data.status||'').toLowerCase();
+    if(status==='success') return {ok:true,data};
+    if(status==='error' || status==='failed' || status==='failure') return {ok:false,error:data.errorMessage||data.message||'Outscraper request failed'};
+    // status is Pending or unrecognized - keep polling until deadline
+  }
+  return {ok:false,error:'Level 1 map/business search timed out waiting for async results'};
+}
+
 async function discoverOutscraperProspects({organizationType,employeeMinimum,market,limit,leadProfile}){
   const outscraperKey=await resolveIntegrationSecret('outscraper','api_key',OUTSCRAPER_API_KEY);
   if(!outscraperKey) return {configured:false, leads:[], error:'OUTSCRAPER_API_KEY is not set'};
@@ -8057,10 +12913,20 @@ async function discoverOutscraperProspects({organizationType,employeeMinimum,mar
     : `${organizationType} businesses in ${market}`;
   url.searchParams.set('query',query);
   url.searchParams.set('limit',String(limit||12));
-  url.searchParams.set('async','false');
-  const response=await fetchWithTimeout(url.toString(),{headers:{'X-API-KEY':outscraperKey}},OUTSCRAPER_FETCH_TIMEOUT_MS,'Level 1 map/business search');
-  const data=await readJsonResponse(response);
-  if(!response.ok) return {configured:true, leads:[], error:data.errorMessage||data.message||`Outscraper ${response.status}`};
+  url.searchParams.set('async','true');
+  const submitResponse=await fetchWithTimeout(url.toString(),{headers:{'X-API-KEY':outscraperKey}},OUTSCRAPER_SUBMIT_TIMEOUT_MS,'Level 1 map/business search submit');
+  const submitData=await readJsonResponse(submitResponse);
+  if(!submitResponse.ok) return {configured:true, leads:[], error:submitData.errorMessage||submitData.message||`Outscraper ${submitResponse.status}`};
+  // Outscraper can occasionally return results inline even on an async submission
+  // (e.g. for very small/fast jobs) - use that directly instead of polling if present.
+  let data=submitData;
+  if(!Array.isArray(submitData.data) || !submitData.data.length){
+    const requestId=submitData.id||submitData.request_id;
+    if(!requestId) return {configured:true, leads:[], error:'Outscraper did not return a request id for the async job'};
+    const polled=await pollOutscraperRequest(requestId,submitData.results_location,outscraperKey);
+    if(!polled.ok) return {configured:true, leads:[], error:polled.error};
+    data=polled.data;
+  }
   const rows=(Array.isArray(data.data)?data.data:[data]).flat(4).filter(v=>v&&typeof v==='object');
   const leads=rows.map(r=>normalizeOutscraperPlace(r,organizationType,employeeMinimum,market))
     .map(p=>({...p,leadProfile,source:leadProfile==='westwood'?'Grace Intelligence Limitless Leads':'LimitLess Leads'}))
@@ -8091,16 +12957,38 @@ function buildGoallSearchJobs(plan){
   return jobs.slice(0,GOALL_LEAD_SEARCH_CALLS_MAX);
 }
 
+const GOALL_LEAD_JOB_CONCURRENCY = Math.min(Math.max(Number(process.env.GOALL_LEAD_JOB_CONCURRENCY)||10,1),10);
+const GOALL_CRM_DEDUPE_CONCURRENCY = Math.min(Math.max(Number(process.env.GOALL_CRM_DEDUPE_CONCURRENCY)||8,1),12);
+const GOALL_LEAD_PER_SEARCH_MAX = Math.min(Math.max(Number(process.env.GOALL_LEAD_PER_SEARCH_MAX)||200,12),200);
+
+// Uses the same email, phone, website/domain, and company-name matcher as final import.
+// Returns {exists, contactId, matchedOn} - never throws; treats lookup failures as "not found"
+// so a transient GHL/API hiccup doesn't silently block the scraper from importing leads.
+async function checkCrmDuplicate(lead){
+  try{
+    // Discovery handles hundreds of rows. Use the strongest available lookup here;
+    // the final import guard still performs the full four-signal duplicate check.
+    const match=await findExistingGhlLeadDuplicate(lead,{maxQueries:1});
+    return match?{exists:true,contactId:match.id,matchedOn:match.match||'crm_match'}:{exists:false};
+  }catch(e){
+    return {exists:false,lookupError:e.message};
+  }
+}
+
 async function discoverGoallProspectsWithOutscraper(plan,rocketReachMode){
   const jobs=buildGoallSearchJobs(plan);
   const requested=plan.requestedViableLeads;
-  const perSearchLimit=Math.min(50,Math.max(12,Math.ceil(Math.min(GOALL_LEAD_RAW_SEARCH_MAX,requested*4)/Math.max(1,Math.min(jobs.length,GOALL_LEAD_SEARCH_CALLS_MAX)))));
+  // A broad GOALL batch should sample every selected industry instead of allowing
+  // the first one or two searches to fill the entire 200-lead result set.
+  const perSearchLimit=jobs.length===1
+    ? Math.min(GOALL_LEAD_PER_SEARCH_MAX,requested)
+    : Math.min(GOALL_LEAD_PER_SEARCH_MAX,Math.max(3,Math.ceil((requested*1.5)/Math.max(1,jobs.length))));
   const raw=[];
   const errors=[];
   let configured=true;
   let rawCount=0;
   const duplicateKeys=new Set();
-  const rejectedReasons={duplicate:0,missing_email_and_phone:0,bad_fit:0};
+  const rejectedReasons={duplicate:0,already_in_crm:0,missing_email_and_phone:0,bad_fit:0};
   const scrapeJob=async(job)=>{
     const scraped=await discoverOutscraperProspects({
       organizationType:job.industry,
@@ -8128,28 +13016,81 @@ async function discoverGoallProspectsWithOutscraper(plan,rocketReachMode){
       raw.push(next);
     }
   };
+  // Run all search jobs with bounded concurrency instead of one-at-a-time sequential awaits.
+  // fastSearch jobs (already a small slice) still run fully in parallel.
   if(plan.fastSearch){
     const scrapeResults=await Promise.all(jobs.map(scrapeJob));
     const missing=scrapeResults.find(result=>!result.scraped.configured);
     if(missing) return {configured:false,leads:[],rawCount,error:missing.scraped.error};
     scrapeResults.forEach(mergeScraped);
   }else{
-    for(const job of jobs){
-      if(raw.length>=GOALL_LEAD_RAW_SEARCH_MAX) break;
-      const result=await scrapeJob(job);
-      if(!result.scraped.configured) return {configured:false,leads:[],rawCount,error:result.scraped.error};
-      mergeScraped(result);
-      if(raw.length>=requested && raw.length>=requested*2) break;
+    const rawTarget=Math.min(GOALL_LEAD_RAW_SEARCH_MAX,Math.max(requested,Math.ceil(requested*1.5)));
+    const jobConcurrency=plan.allPriority?GOALL_LEAD_MIXED_JOB_CONCURRENCY:GOALL_LEAD_JOB_CONCURRENCY;
+    for(let index=0;index<jobs.length;index+=jobConcurrency){
+      const wave=jobs.slice(index,index+jobConcurrency);
+      const scrapeResults=await Promise.all(wave.map(scrapeJob));
+      const missing=scrapeResults.find(result=>!result.scraped.configured);
+      if(missing) return {configured:false,leads:[],rawCount,error:missing.scraped.error};
+      scrapeResults.forEach(mergeScraped);
+      if(raw.length>=rawTarget) break;
     }
   }
-  const enriched=[];
-  const enrichLimit=Math.min(raw.length,GOALL_LEAD_RAW_SEARCH_MAX);
-  for(const prospect of raw.slice(0,enrichLimit)){
-    const next=await enrichProspect(prospect,{rocketReachMode,fastPreview:plan.fastSearch}).catch(e=>({...prospect,rocketReachStatus:e.message}));
-    const exactIndustry=next.aiExactIndustry||next.industry||next.organizationType||prospect.organizationType||'unclear';
-    enriched.push(applyLeadScoring({...next,aiExactIndustry:exactIndustry,leadProfile:plan.leadProfile}));
-    if(enriched.length>=requested) break;
+  // Filter out leads that already exist in the GHL CRM (by email or phone) before spending
+  // enrichment calls (website scrape, Apollo, RocketReach) on them.
+  const crmChecked=await mapWithConcurrency(raw,GOALL_CRM_DEDUPE_CONCURRENCY,async lead=>{
+    const dup=await checkCrmDuplicate(lead);
+    return {lead,dup};
+  });
+  let freshLeads=[];
+  for(const {lead,dup} of crmChecked){
+    if(dup.exists){
+      rejectedReasons.already_in_crm+=1;
+      continue;
+    }
+    freshLeads.push(lead);
   }
+  // If CRM-dedupe filtered out a large share of the batch, run one bounded top-up pass
+  // (higher per-search limit, same jobs) so the user still gets close to what they asked for.
+  if(freshLeads.length<requested && freshLeads.length<raw.length){
+    const topUpLimit=Math.min(GOALL_LEAD_PER_SEARCH_MAX,perSearchLimit*2);
+    const topUpJobs=jobs.slice(0,GOALL_LEAD_JOB_CONCURRENCY);
+    const topUpResults=await Promise.all(topUpJobs.map(async job=>{
+      const scraped=await discoverOutscraperProspects({
+        organizationType:job.industry,
+        employeeMinimum:plan.employeeMinimum,
+        market:job.market,
+        limit:topUpLimit,
+        leadProfile:plan.leadProfile
+      }).catch(e=>({configured:!!OUTSCRAPER_API_KEY,leads:[],error:e.message}));
+      return {job,scraped};
+    }));
+    topUpResults.forEach(mergeScraped);
+    const newRaw=raw.slice(crmChecked.length);
+    if(newRaw.length){
+      const newChecked=await mapWithConcurrency(newRaw,GOALL_CRM_DEDUPE_CONCURRENCY,async lead=>{
+        const dup=await checkCrmDuplicate(lead);
+        return {lead,dup};
+      });
+      for(const {lead,dup} of newChecked){
+        if(dup.exists){
+          rejectedReasons.already_in_crm+=1;
+          continue;
+        }
+        freshLeads.push(lead);
+      }
+    }
+  }
+  const enrichLimit=Math.min(freshLeads.length,GOALL_LEAD_RAW_SEARCH_MAX);
+  const broadPreview=requested>=100;
+  const broadGoallPersonLookup=broadPreview && plan.leadProfile==='goall';
+  const enrichmentConcurrency=broadGoallPersonLookup?20:(requested>=25?6:3);
+  const enriched=await mapWithConcurrency(freshLeads.slice(0,Math.min(enrichLimit,requested)),enrichmentConcurrency,async prospect=>{
+    const next=broadGoallPersonLookup
+      ? await enrichProspectWithApollo(prospect).then(value=>({...value,rocketReachStatus:'deferred until review'})).catch(e=>({...prospect,apolloStatus:e.message,rocketReachStatus:'deferred until review'}))
+      : await enrichProspect(prospect,{rocketReachMode,fastPreview:plan.fastSearch||broadPreview}).catch(e=>({...prospect,rocketReachStatus:e.message}));
+    const exactIndustry=next.aiExactIndustry||next.industry||next.organizationType||prospect.organizationType||'unclear';
+    return applyLeadScoring(sanitizeDecisionMaker({...next,aiExactIndustry:exactIndustry,leadProfile:plan.leadProfile}));
+  });
   const viable=[];
   for(const lead of enriched){
     viable.push(lead);
@@ -8346,12 +13287,23 @@ async function discoverHbsLeadProspects(body={}){
         'Do not reject a prospect solely because email, phone, or decision-maker name is missing.',
         '',
         'Return JSON with this exact shape:',
-        '{"leads":[{"organizationName":"","website":"","industry":"","aiExactIndustry":"","leadScore":1,"leadScoreReason":"","automationTag":"","automationTagReason":"","normalizedIndustry":"","rawIndustry":"","tagConfidence":"","needsNewAutomation":false,"suggestedNewAutomationTag":"","primaryService":"","location":"","city":"","state":"","organizationType":"","partnerFit":"","approximateDonors":0,"estimatedEmployeeCount":"","employeeCountConfidence":"","employeeCountNote":"","donorEstimateBasis":"","evidenceSignals":[""],"growthSignals":"","leadershipSignals":"","workforcePainSignals":"","engagementActivitySignals":"","decisionMakerName":"","decisionMakerTitle":"","decisionMakerEmail":"","decisionMakerPhone":"","decisionMakerLinkedin":"","email":"","phone":"","linkedinPersonalUrl":"","linkedinCompanyUrl":"","companyLinkedin":"","hiringActivity":"","careersPage":"","growthActivity":"","operationalActivity":"","socialActivity":"","operationalIndicators":"","weakFitConcerns":"","googleRaw":"","newsRaw":"","goallIntelligenceNote":"","recommendedFirstCallAngle":"","missingData":"","nextOutreachAngle":"","confidence":""}]}'
+        '{"leads":[{"organizationName":"","website":"","industry":"","aiExactIndustry":"","leadScore":1,"leadScoreReason":"","automationTag":"","automationTagReason":"","normalizedIndustry":"","rawIndustry":"","tagConfidence":"","needsNewAutomation":false,"suggestedNewAutomationTag":"","primaryService":"","location":"","city":"","state":"","organizationType":"","partnerFit":"","approximateDonors":0,"donorEstimateBasis":"","evidenceSignals":[""],"decisionMakerName":"","decisionMakerTitle":"","email":"","phone":"","linkedinPersonalUrl":"","linkedinCompanyUrl":"","hiringActivity":"","careersPage":"","growthActivity":"","operationalActivity":"","socialActivity":"","operationalIndicators":"","weakFitConcerns":"","googleRaw":"","newsRaw":"","nextOutreachAngle":"","confidence":""}]}'
       ].join('\n');
       try{
         raw=await callOpenAIWebResearch({system,user,maxTokens:6000,temperature:0.15});
-        leads=extractJsonArray(raw).slice(0,GOALL_LEAD_RAW_SEARCH_MAX);
-        leads=await mapWithConcurrency(leads,5,p=>enrichProspect({...p,organizationType:p.organizationType||organizationType,approximateDonors:p.approximateDonors||0},{rocketReachMode}));
+        let candidates=extractJsonArray(raw).slice(0,GOALL_LEAD_RAW_SEARCH_MAX);
+        // Same CRM-dedupe as the Outscraper path: skip leads already in GHL before
+        // spending enrichment calls (Apollo/RocketReach/website lookups) on them.
+        const candidateChecks=await mapWithConcurrency(candidates,GOALL_CRM_DEDUPE_CONCURRENCY,async lead=>{
+          const dup=await checkCrmDuplicate(lead);
+          return {lead,dup};
+        });
+        let webRejectedDuplicates=0;
+        candidates=candidateChecks.filter(({dup})=>{
+          if(dup.exists){ webRejectedDuplicates+=1; return false; }
+          return true;
+        }).map(({lead})=>lead);
+        leads=await mapWithConcurrency(candidates,5,p=>enrichProspect({...p,organizationType:p.organizationType||organizationType,approximateDonors:p.approximateDonors||0},{rocketReachMode}));
         leads=leads
           .map(p=>{
             const exactIndustry=p.aiExactIndustry||p.ai_exact_industry||p.industry||p.organizationType||'unclear';
@@ -8359,6 +13311,7 @@ async function discoverHbsLeadProspects(body={}){
           })
           .sort(sortGoallLeads)
           .slice(0,limit);
+        if(webRejectedDuplicates) scraped.rejectedReasons={...(scraped.rejectedReasons||{}),already_in_crm:(scraped.rejectedReasons?.already_in_crm||0)+webRejectedDuplicates};
       }catch(e){
         webError=e.message||'upstream error';
       }
@@ -8403,7 +13356,7 @@ function leadDiscoveryFailureText({plan,scraped,webError}={}){
     'Try this next:',
     '- Run a smaller test batch, like 12 leads.',
     '- Use one specific industry and city, for example "HVAC companies in Phoenix".',
-    '- Open Register Your Keys and test Outscraper and OpenAI if this happens on every search.'
+    '- Open API Keys & Connections and test Outscraper and OpenAI if this happens on every search.'
   ].filter(Boolean).join('\n');
 }
 
@@ -8430,7 +13383,7 @@ function leadDiscoveryErrorPayload(body,error){
     searchPlan:plan||{criteria,market,organizationType,employeeMinimum,leadBrand:body?.leadProfile==='westwood'?'Westwood':'GOALL'},
     report:{requestedViableLeads:Number(body?.limit)||12,viableLeads:0,rawCount:0},
     error:scraped.error,
-    content:leadDiscoveryFailureText({plan:plan||{criteria,market,organizationType,employeeMinimum,leadBrand:body?.leadProfile==='westwood'?'Westwood':'GOALL'},scraped,webError:scraped.error})
+    content:leadDiscoveryFailureText({plan:plan||{criteria,market,organizationType,employeeMinimum,leadBrand:body?.leadProfile==='westwood'?'Westwood':'GOALL'},scraped})
   };
 }
 
@@ -8448,6 +13401,7 @@ function leadPreviewText(discovered){
     cities:discovered.searchPlan?.cities||[],
     rejectedReasons:discovered.scraped?.rejectedReasons||{}
   });
+  const alreadyInCrm=Number(report.rejectedReasons?.already_in_crm||0);
   const level1Status=p=>{
     const hasBusiness=!!(p.organizationName||p.name);
     const hasWebsite=!!p.website;
@@ -8471,6 +13425,7 @@ function leadPreviewText(discovered){
     `Search: ${discovered.organizationType} | ${discovered.employeeMinimum}+ employees | ${discovered.market}`,
     `Requested viable leads: ${report.requestedViableLeads}`,
     `Viable found: ${report.viableLeadsFound} | Full: ${report.fullContactability} | Email only: ${report.emailOnly} | Phone only: ${report.phoneOnly} | No contact method: ${report.noContact||0}`,
+    alreadyInCrm?`Already in GHL CRM and filtered before enrichment: ${alreadyInCrm}`:'',
     brand==='GOALL'?`Pipeline volume standard: ${report.viableLeadsFound}/${GOALL_PIPELINE_MINIMUM} people/prospects found in this batch. ${report.pipelineVolumeStatus==='sufficient'?'Minimum met.':'Not enough yet.'}`:'',
     brand==='GOALL'&&report.pipelineVolumeWarning?report.pipelineVolumeWarning:'',
     'Lead Score Breakdown:',
@@ -8493,13 +13448,11 @@ function leadPreviewText(discovered){
       const automation=brand==='GOALL'?mapGoallAutomationTag(p):{};
       const donorCount=donorValue(p.approximateDonors||p.estimatedDonors||p.donorCount);
       const contactability=leadContactability(p);
-      const goallIntel=brand==='GOALL'?buildGoallIntelligenceProfile(p,p.aiExactIndustry||p.ai_exact_industry||p.industry||p.organizationType||'business'):null;
       return [
         `${i+1}. ${p.organizationName||p.name||'Unnamed organization'}`,
         `   Industry: ${p.aiExactIndustry||p.ai_exact_industry||p.industry||p.organizationType||'unclear'}`,
         `   Lead Score: ${p.leadScore} (${p.leadScore===1?'Highest Priority':p.leadScore===2?'Strong Fit':p.leadScore===3?'Possible Fit':'Low Fit'})`,
         `   Lead Score Reason: ${p.leadScoreReason}`,
-        goallIntel?`   Recommended First Call Angle: ${goallIntel.firstCall}`:'',
         automation.automationTag?`   Automation Tag: ${automation.automationTag}`:'',
         automation.tagConfidence?`   Tag Confidence: ${automation.tagConfidence}`:'',
         automation.automationTag?`   Needs New Automation: ${automation.needsNewAutomation?'yes':'no'}`:'',
@@ -8511,11 +13464,7 @@ function leadPreviewText(discovered){
         `   Contactability: ${contactability.contactabilityStatus}`,
         `   Outreach: ${leadContactabilityNote(contactability)}`,
         `   Decision maker: ${p.decisionMakerName||'unclear'}${p.decisionMakerTitle?' - '+p.decisionMakerTitle:''}`,
-        `   Employee estimate: ${goallIntel?.employee?.count||donorCount||'unclear'}${goallIntel?.employee?.confidence?' ('+goallIntel.employee.confidence+')':''}`,
-        goallIntel?`   Growth signals: ${goallIntel.signals.growth}`:'',
-        goallIntel?`   Workforce signals: ${goallIntel.signals.workforce}`:'',
-        goallIntel?`   Leadership signals: ${goallIntel.signals.leadership}`:'',
-        goallIntel?`   Lead Intelligence Summary: ${goallIntel.note.replace(/\n/g,' | ')}`:'',
+        `   Employee estimate: ${donorCount||'unclear'}`,
         `   ${brand} fit: ${p.goallFitScore||'unclear'}${p.goallFitReason?' - '+p.goallFitReason:''}`,
         `   Evidence: ${Array.isArray(p.evidenceSignals)?p.evidenceSignals.slice(0,4).join('; '):(p.evidenceSignals||p.donorEstimateBasis||'unclear')}`,
         `   Level 1: ${level1Status(p)}`,
@@ -8539,7 +13488,10 @@ function ghlContactMatchText(contact={}){
     contact.lastName,
     contact.companyName,
     contact.businessName,
-    contact.website
+    contact.website,
+    contact.linkedinUrl,
+    contact.linkedin,
+    contact.customFields?.map?.(field=>field.field_value||field.value||'').join(' ')
   ].filter(Boolean).join(' ').toLowerCase();
 }
 
@@ -8548,21 +13500,24 @@ function leadDuplicateNeedles(p={}){
     validEmail(p.email)?String(p.email).toLowerCase().trim():'',
     validPhone(p.phone)?String(p.phone).replace(/\D/g,''):'',
     leadDomain(p.website||''),
-    normalizeCompanyForMatch(p.organizationName||p.name||'')
+    normalizeCompanyForMatch(p.organizationName||p.name||''),
+    String(p.linkedinPersonalUrl||p.linkedinCompanyUrl||p.linkedinUrl||'').toLowerCase().trim()
   ].filter(Boolean);
 }
 
-async function findExistingGhlLeadDuplicate(p={}){
+async function findExistingGhlLeadDuplicate(p={},options={}){
   const queries=[
     validEmail(p.email)?String(p.email).trim():'',
     validPhone(p.phone)?String(p.phone).trim():'',
     leadDomain(p.website||''),
-    p.organizationName||p.name||''
+    p.organizationName||p.name||'',
+    p.linkedinPersonalUrl||p.linkedinCompanyUrl||p.linkedinUrl||''
   ].filter(Boolean);
   const needles=leadDuplicateNeedles(p);
   if(!queries.length || !needles.length) return null;
   const locationId=await resolveGhlLocationId();
-  for(const q of queries.slice(0,3)){
+  const maxQueries=Math.min(Math.max(Number(options.maxQueries)||4,1),4);
+  for(const q of queries.slice(0,maxQueries)){
     const data=await ghlStrict('GET',`/contacts/?locationId=${encodeURIComponent(locationId||GHL_LOC||'')}&query=${encodeURIComponent(q)}&limit=10`).catch(()=>null);
     const contacts=data?.contacts||data?.data||[];
     for(const contact of contacts){
@@ -8597,8 +13552,7 @@ async function ensureGhlOpportunityForExistingLead(lead,duplicate,discovered,aut
   const isGoall=(discovered.searchPlan?.leadBrand==='GOALL'||discovered.leadProfile==='goall');
   if(isGoall){
     const leadFields=leadCustomFieldsFromProspect({...lead,...automation});
-    const leadFieldIds=await resolveLeadFieldIds().catch(()=>GHL_LEAD_FIELD_IDS);
-    await assertGoallLeadScoreField(leadFieldIds);
+    const leadFieldIds=await resolveLeadFieldIds().catch(()=>({}));
     await updateGhlLeadFields(contactId,leadFields);
   }
   const existing=await findOpenOpportunityForContact(contactId);
@@ -8619,8 +13573,8 @@ async function ensureGhlOpportunityForExistingLead(lead,duplicate,discovered,aut
   };
   const opportunityData=await createGhlOpportunity(opportunityPayload);
   const tags=isGoall
-    ? [automation.automationTag,'GOALL Lead','Limitless Leads'].filter(Boolean)
-    : [discovered.tag||'limitless_enrich'].filter(Boolean);
+    ? [automation.automationTag,'Employer','GOALL Lead','Limitless Leads'].filter(Boolean)
+    : [discovered.tag||'limitless_enrich','Employer'].filter(Boolean);
   if(tags.length) await ghlStrict('POST',`/contacts/${contactId}/tags`,{tags}).catch(()=>{});
   return {created:true, contactId, opportunity:opportunityData.opportunity||opportunityData,pipelineId:target.pipelineId,stageId:target.stageId,pipelineName:target.pipelineName||'',stageName:target.stageName||''};
 }
@@ -8633,17 +13587,11 @@ async function importApprovedHbsLeads(discovered){
   const created=[];
   const failed=[];
   const skipped=[];
-  for(const lead of leads){
+  await mapWithConcurrency(leads,GOALL_LEAD_IMPORT_CONCURRENCY,async lead=>{
     const automation=brand==='GOALL'?mapGoallAutomationTag(lead):{};
     if(brand==='GOALL' && !automation.automationTag){
       skipped.push({name:lead.organizationName||lead.name||'Unknown lead',reason:'missing_automation_tag'});
-      continue;
-    }
-    const contactability=leadContactability(lead);
-    const goallIntel=brand==='GOALL'?buildGoallIntelligenceProfile(lead,lead.aiExactIndustry||lead.ai_exact_industry||lead.industry||lead.organizationType||'business'):null;
-    if(brand==='GOALL' && !contactability.importable && !strongGoallManualReviewLead(lead,goallIntel)){
-      skipped.push({name:lead.organizationName||lead.name||'Unknown lead',reason:'missing_email_and_phone'});
-      continue;
+      return;
     }
     try{
       const duplicate=await findExistingGhlLeadDuplicate(lead);
@@ -8658,13 +13606,13 @@ async function importApprovedHbsLeads(discovered){
           opportunityExisting:!!repaired.existing,
           opportunityError:repaired.error||''
         });
-        continue;
+        return;
       }
       created.push(await createGhlLeadFromProspect({...lead,...automation,tag,organizationType:lead.organizationType||organizationType,approximateDonors:lead.approximateDonors||0},{tag}));
     }catch(e){
       failed.push({name:lead.organizationName||lead.name||'Unknown lead',error:e.message});
     }
-  }
+  });
   const automationSummary=brand==='GOALL'?summarizeGoallAutomationTags(leads):null;
   const automationLines=automationSummary?Object.entries(automationSummary.tagCounts).filter(([,count])=>count>0).map(([automationTag,count])=>`${automationTag}: ${count}`):[];
   const suggestedAutomationLines=automationSummary?Object.entries(automationSummary.suggestedCounts).filter(([,count])=>count>0).map(([automationTag,count])=>`${automationTag}: ${count}`):[];
@@ -8690,7 +13638,7 @@ async function importApprovedHbsLeads(discovered){
     failed.length?`Failed: ${failed.length}`:'',
     '',
     created.map(c=>`- ${c.name} | Lead Score: ${c.leadScore} | Contactability: ${c.contactabilityStatus}${c.contactabilityStatus==='phone_only'?' | Imported contact with phone only. No email was found, so the initial automated email sequence was not sent.':''} | Exact industry: ${c.aiExactIndustry||'unclear'}${c.automationTag?' | Automation: '+c.automationTag+' ('+c.tagConfidence+')':''} | Tags: ${(c.tags||[]).join(', ')} | Contact: ${c.contactId} | Opportunity value: $${c.value}${c.pipelineName||c.stageName?' | '+[c.pipelineName,c.stageName].filter(Boolean).join(' / '):''}${c.pipelineId?' | Pipeline ID: '+c.pipelineId:''}${c.stageId?' | Stage ID: '+c.stageId:''}${c.customFieldUpdate?.updated?'':' | Custom field warning: '+(c.customFieldUpdate?.reason||c.customFieldUpdate?.error||'not updated')}`).join('\n'),
-    skipped.length?'\nSkipped / repaired leads:\n'+skipped.map(s=>`- ${s.name}: ${s.reason==='duplicate'?(s.opportunityCreated?'Matching GHL contact already existed; missing opportunity was created.':s.opportunityExisting?'Matching GHL contact already has an open opportunity.':'Skipped because a matching GHL contact already exists.'):s.reason==='missing_automation_tag'?'Contact was not imported because no GOALL automation tag could be assigned.':s.reason==='missing_email_and_phone'?'Contact was not imported because no email or phone was found and the company intelligence was not strong enough for manual review routing.':'Skipped before import.'} Reason: ${s.reason}${s.contactId?' | Existing contact: '+s.contactId:''}${s.opportunityError?' | Opportunity repair failed: '+s.opportunityError:''}`).join('\n'):'',
+    skipped.length?'\nSkipped / repaired leads:\n'+skipped.map(s=>`- ${s.name}: ${s.reason==='duplicate'?(s.opportunityCreated?'Matching GHL contact already existed; missing opportunity was created.':s.opportunityExisting?'Matching GHL contact already has an open opportunity.':'Skipped because a matching GHL contact already exists.'):s.reason==='missing_automation_tag'?'Contact was not imported because no GOALL automation tag could be assigned.':'Skipped before import.'} Reason: ${s.reason}${s.contactId?' | Existing contact: '+s.contactId:''}${s.opportunityError?' | Opportunity repair failed: '+s.opportunityError:''}`).join('\n'):'',
     failed.length?'\nFailed imports:\n'+failed.map(f=>`- ${f.name}: ${f.error}`).join('\n'):''
   ].filter(Boolean).join('\n');
   await saveMemoryItem({
@@ -8703,10 +13651,10 @@ async function importApprovedHbsLeads(discovered){
   return {ok:true,created,failed,skipped,content:summary};
 }
 
-async function enrichProspectWithRocketReach(p){
+async function enrichProspectWithRocketReach(p,options={}){
   const rocketReachKey=await resolveIntegrationSecret('rocketreach','api_key',ROCKETREACH_API_KEY);
   if(!rocketReachKey) return {...p,rocketReachStatus:'ROCKETREACH_API_KEY is not set'};
-  const rocket=await lookupRocketReachDecisionMaker(p.organizationName||p.name||'',p).catch(e=>({error:e.message}));
+  const rocket=await lookupRocketReachDecisionMaker(p.organizationName||p.name||'',p,options).catch(e=>({error:e.message}));
   const data=rocket?.data||{};
   const nextEmail=isLikelyPersonEmail(data.email) || !p.email ? data.email : p.email;
   const nextPhone=validPhone(data.phone) && !validPhone(p.phone) ? data.phone : p.phone;
@@ -8783,13 +13731,13 @@ function enrichmentLevelSummaryLines(p,contactability=leadContactability(p)){
 
 async function createGhlLeadFromProspect(p,opts={}){
   p=applyLeadScoring(p);
-  p={
+  p=sanitizeDecisionMaker({
     ...p,
-    email:p.email||p.decisionMakerEmail||p.decision_maker_email||'',
-    phone:p.phone||p.decisionMakerPhone||p.decision_maker_phone||'',
+    email:normalizeEmailAddress(p.email||p.decisionMakerEmail||p.decision_maker_email||''),
+    phone:normalizePhoneNumber(p.phone||p.decisionMakerPhone||p.decision_maker_phone||''),
     linkedinPersonalUrl:p.linkedinPersonalUrl||p.decisionMakerLinkedin||p.decisionMakerLinkedIn||p.decision_maker_linkedin||'',
     linkedinCompanyUrl:p.linkedinCompanyUrl||p.companyLinkedin||p.companyLinkedIn||p.company_linkedin||''
-  };
+  });
   const donorCount=donorValue(p.approximateDonors||p.estimatedDonors||p.donorCount);
   const name=p.organizationName||p.name||'Unnamed business lead';
   const isWestwood=(p.leadProfile||'').toLowerCase()==='westwood';
@@ -8800,17 +13748,10 @@ async function createGhlLeadFromProspect(p,opts={}){
   const source=isWestwood?'Grace Intelligence Limitless Leads':'LimitLess Leads';
   const country=normalizeCountryCode(p.country);
   const contactability=leadContactability(p);
-  const goallIntel=isWestwood?null:buildGoallIntelligenceProfile(p,p.aiExactIndustry||p.industry||p.organizationType||'business');
-  const allowManualReview=!isWestwood && !contactability.importable && strongGoallManualReviewLead(p,goallIntel);
-  if(!contactability.importable && !allowManualReview){
-    throw new Error('missing_email_and_phone');
-  }
   const leadFields=leadCustomFieldsFromProspect(p);
-  const leadFieldIds=await resolveLeadFieldIds().catch(()=>GHL_LEAD_FIELD_IDS);
-  if(!isWestwood) await assertGoallLeadScoreField(leadFieldIds);
+  const leadFieldIds=await resolveLeadFieldIds().catch(()=>({}));
   const leadCustomFields=leadCustomFieldPayloads(leadFieldIds,leadFields);
-  const tags=isWestwood?[tag]:[automation.automationTag,'GOALL Lead','Limitless Leads'];
-  if(allowManualReview) tags.push('Manual Review');
+  const tags=isWestwood?[tag,'Employer']:[automation.automationTag,'Employer','GOALL Lead','Limitless Leads'];
   if(!contactability.hasEmail) tags.push('No Email');
   const decisionName=String(p.decisionMakerName||'').trim();
   const nameParts=decisionName.split(/\s+/).filter(Boolean);
@@ -8857,9 +13798,6 @@ async function createGhlLeadFromProspect(p,opts={}){
   const note=[
     ...enrichmentLevelSummaryLines(p,contactability),
     '',
-    !isWestwood && goallIntel?.note?`Lead Intelligence Summary:\n${goallIntel.note}`:'',
-    !isWestwood && goallIntel?.firstCall?`Recommended First Call Angle:\n${goallIntel.firstCall}`:'',
-    allowManualReview?'Manual review route: no email or phone was found, but company intelligence is strong enough to review before outreach.':'',
     p.decisionMakerName
       ? `Decision maker verified: ${p.decisionMakerName}${p.decisionMakerTitle?' - '+p.decisionMakerTitle:''}.`
       : 'Public data did not return a reliable name for the decision maker. First and last name were set to unknown. Do not treat the company name as a person. Review or enrich before person-specific outreach.',
@@ -9391,55 +14329,237 @@ app.get('/api/val/memory/search',async(req,res)=>{
     res.json({ok:true,query:q,results:ranked});
   }catch(e){res.status(500).json({error:e.message});}
 });
-async function processTranscriptPayload(payload){
-  const transcript=payload.transcript||payload.rawText||'';
-  if(!transcript.trim()) throw new Error('Missing transcript');
-  const title=payload.title||'Processed transcript';
-  const sourceId=payload.savedTranscriptId||payload.id||payload.transcriptId||payload.sourceId||title;
-  const memory=await recentMemoryContext(title+' '+transcript.slice(0,1000));
-  const system=[VAL_SYSTEM_PROMPT,'You process transcripts for VAL. Your job is to prevent commitments from leaking.','Extract every unresolved promise, next step, follow-up, owner action, waiting-for item, meeting prep need, and task implied by the conversation.','If someone says they will send, review, schedule, introduce, decide, follow up, check, draft, prepare, update, research, or circle back, that belongs in actionItems unless it was explicitly completed in the transcript.','If a follow-up message should be sent after the meeting, include it in followupDrafts and also create a matching actionItems entry unless another action item already covers it.','Do not invent work. Do not create tasks for completed items. When due timing is unclear, use null.','Return strict JSON with keys: summary, actionItems, decisions, people, memoryUpdates, followupDrafts.','actionItems must be an array of objects with title, dueDate, notes, priority, contactName, person, evidence.','Every action item title should start with a verb and be clear enough to execute without reopening the transcript.',memory?'Relevant saved memory:\n'+memory:''].filter(Boolean).join('\n\n');
-  const raw=await callValModel({system,user:'Transcript title: '+title+'\n\nTranscript:\n'+transcript.slice(0,30000),maxTokens:1800,temperature:0.2,json:true});
-  let parsed={};
-  try{parsed=JSON.parse(raw);}catch(e){parsed={summary:raw,actionItems:[],decisions:[],people:[],memoryUpdates:[],followupDrafts:[]};}
-  const createdTasks=[];
-  const createdDrafts=[];
-  const taskItems=Array.isArray(parsed.actionItems)?parsed.actionItems.slice(0,18):[];
-  const rawFollowupDrafts=(Array.isArray(parsed.followupDrafts)?parsed.followupDrafts:[]).slice(0,8);
-  const followupItems=rawFollowupDrafts.map(f=>({title:f.title||f.task||('Send follow-up'+(f.recipient||f.contactName||f.person?' to '+(f.recipient||f.contactName||f.person):'')),contactName:f.contactName||f.person||f.recipient||'',dueDate:f.dueDate||null,notes:[f.reason||'',f.subject?'Subject: '+f.subject:'',f.message||f.body||''].filter(Boolean).join('\n'),priority:f.priority||'high',evidence:f.evidence||'Follow-up draft created from transcript'}));
-  const existing=await loadTasks();
-  const seen=new Set(existing.filter(t=>!t.completed).map(t=>taskFingerprint(t.title,t.contactName)));
-  for(const item of taskItems.concat(followupItems)){
-    const task=transcriptTaskFromItem(item,title,sourceId,'transcript_action');
-    if(!task) continue;
-    const fp=taskFingerprint(task.title,task.contactName);
-    if(seen.has(fp)) continue;
-    seen.add(fp);
-    await saveTask(task);
-    createdTasks.push(task);
-  }
-  for(const f of rawFollowupDrafts){
-    const body=f.message||f.body||'';
-    if(!body.trim()) continue;
-    createdDrafts.push(await saveInternalDraft({draftType:'follow_up',provider:'internal',subject:f.subject||('Follow-up: '+title),body,status:'draft',sourceContext:{source:'transcript_processing',transcriptId:sourceId,recipient:f.recipient||f.email||'',person:f.person||f.contactName||'',reason:f.reason||''}}));
-  }
-  if(Array.isArray(parsed.memoryUpdates)){
-    for(const m of parsed.memoryUpdates.slice(0,12)){
-      const text=typeof m==='string'?m:(m.text||m.summary||JSON.stringify(m));
-      await saveMemoryItem({kind:'transcript_insight',summary:title,rawText:text,importance:3,metadata:{title,source:'transcript_processing'}});
-    }
-  }
-  let meetingMatch=payload.meetingMatch||null;
-  if(!meetingMatch){
-    try{
-      meetingMatch=await linkTranscriptToBestMeeting({id:sourceId,title,rawText:transcript,metadata:payload.metadata||payload,createdAt:payload.timestamp||payload.createdAt||new Date().toISOString()});
-    }catch(e){console.log('Transcript meeting match skipped:',e.message);}
-  }
-  console.log(`Transcript processed: title="${title}" actionItems=${taskItems.length} tasksCreated=${createdTasks.length} draftsCreated=${createdDrafts.length} meetingMatched=${!!meetingMatch}`);
-  return {analysis:parsed,createdTasks,createdDrafts,meetingMatch,counts:{actionItemsExtracted:taskItems.length,tasksCreated:createdTasks.length,draftsCreated:createdDrafts.length,meetingMatched:meetingMatch?1:0}};
+function transcriptSupportingQuote(transcript,requested=''){
+  const text=String(transcript||''),quote=String(requested||'').trim();
+  if(quote&&text.toLowerCase().includes(quote.toLowerCase()))return quote.slice(0,800);
+  const sentences=text.split(/(?<=[.!?])\s+|\n+/).map(s=>s.trim()).filter(Boolean);
+  return (sentences.find(s=>/\b(will|need to|follow up|send|schedule|review|update|introduce|decided|agreed)\b/i.test(s))||sentences[0]||text.slice(0,500)).slice(0,800);
 }
-app.post('/api/val/transcripts',async(req,res)=>{try{const body=req.body||{};const transcriptText=body.transcript||body.rawText||body.text||'';console.log('Transcript received:',body.title||body.type||'untitled');const saved=await saveTranscript({...body,transcript:transcriptText});const transcriptRecord={id:saved.id,title:body.title||saved.type,rawText:transcriptText,metadata:body,createdAt:body.timestamp||body.createdAt||new Date().toISOString()};const meetingMatch=await linkTranscriptToBestMeeting(transcriptRecord).catch(e=>{console.log('Transcript link failed:',e.message);return null;});if(body&&body.process!==false)return res.json({ok:true,...saved,...await processTranscriptPayload({...body,transcript:transcriptText,savedTranscriptId:saved.id,meetingMatch})});res.json({ok:true,...saved,meetingMatch});}catch(e){console.error('Transcript save/process error:',e.message);res.status(500).json({error:e.message});}});
-app.post('/api/val/transcripts/process',async(req,res)=>{try{const body=req.body||{};const transcriptText=body.transcript||body.rawText||body.text||'';const title=body.title||'Processed transcript';const saved=await saveTranscript({type:'processed_transcript',title,transcript:transcriptText,metadata:{source:body.source||'manual_process'},importance:3});const transcriptRecord={id:saved.id,title,rawText:transcriptText,metadata:body,createdAt:body.timestamp||body.createdAt||new Date().toISOString()};const meetingMatch=await linkTranscriptToBestMeeting(transcriptRecord).catch(e=>{console.log('Transcript link failed:',e.message);return null;});res.json({ok:true,...saved,...await processTranscriptPayload({...body,transcript:transcriptText,title,savedTranscriptId:saved.id,meetingMatch})});}catch(e){res.status(500).json({error:e.message});}});
+function transcriptIdentityInputs(payload,transcript){
+  const attendees=[...(Array.isArray(payload.attendees)?payload.attendees:[]),...(Array.isArray(payload.metadata?.attendees)?payload.metadata.attendees:[]),...inferAttendeesFromEvent(payload.meetingMatch||payload.calendarEvent||{})];
+  const speakers=[...String(transcript).matchAll(/^\s*([^:\n]{2,80}):\s*.+$/gm)].map(match=>match[1].trim()).filter(name=>!/^https?|meeting|transcript$/i.test(name));
+  const emails=[...String(transcript).matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)].map(match=>match[0]);
+  const inputs=[];
+  for(const attendee of attendees)inputs.push({name:attendee.name||attendee.displayName||'',email:attendee.email||attendee.address||'',phone:attendee.phone||'',company:attendee.company||'',origin:'calendar attendee'});
+  for(const name of speakers)inputs.push({name,origin:'transcript speaker'});
+  for(const email of emails)inputs.push({email,origin:'transcript email'});
+  const merged=[];for(const input of inputs){const email=normalizeContextEmail(input.email),name=normalizeContextName(input.name),existing=merged.find(row=>(email&&normalizeContextEmail(row.email)===email)||(name&&normalizeContextName(row.name)===name));if(existing)Object.assign(existing,compactObject({...existing,...input,email:existing.email||input.email,name:existing.name||input.name,origin:existing.origin==='calendar attendee'?existing.origin:input.origin}));else if(email||name)merged.push(input);}return merged.slice(0,30);
+}
+async function matchTranscriptParticipants(payload,transcriptId,transcript){
+  const participants=[];
+  for(const input of transcriptIdentityInputs(payload,transcript)){
+    const resolution=await resolveContactFromContext({...input,transcript,attendees:payload.attendees||payload.metadata?.attendees||[],calendarEvent:payload.meetingMatch||payload.calendarEvent||{}});
+    const best=resolution.contact||null,second=resolution.matches?.[1]||null;
+    const ambiguous=!!(best&&second&&best.id!==second.id&&Math.abs(best.confidence-second.confidence)<0.12);
+    const confidence=ambiguous?Math.min(Number(best.confidence||0),0.6):Number(best?.confidence||0);
+    let reason=input.email&&best?.email===normalizeContextEmail(input.email)?`${input.origin}: exact email`:input.phone&&best?.phone===normalizeContextPhone(input.phone)?'transcript phone: exact phone':best?.matchReasons?.join(', ')||'No reliable CRM contact match';
+    if(ambiguous)reason=`Ambiguous match: ${best.name||best.id} and ${second.name||second.id} scored too closely; review required`;
+    participants.push({participantId:uuid('tr_participant'),transcriptId,speakerNameRaw:input.name||input.email||input.phone||'Unknown participant',matchedContactId:ambiguous?'':best?.id||'',matchedContactName:ambiguous?'':best?.name||'',matchedEmail:ambiguous?'':best?.email||input.email||'',matchedPhone:ambiguous?'':best?.phone||input.phone||'',matchedCompany:ambiguous?'':best?.company||input.company||'',matchConfidence:confidence,matchReason:reason,needsReview:ambiguous||!best||confidence<TRANSCRIPT_SAFE_MATCH_CONFIDENCE,createdAt:new Date().toISOString()});
+  }
+  await replaceTranscriptParticipants(transcriptId,participants);return participants;
+}
+async function promoteTranscriptTask(staged){
+  const data=await transcriptIndexData(staged.transcriptId).catch(()=>({transcripts:[]}));
+  const transcript=data.transcripts?.[0]||{};
+  const transcriptTitle=transcriptDisplayTitleFromPayload({...transcript,title:transcript.meetingTitle,meetingTitle:transcript.meetingTitle,calendarEventTitle:staged.calendarEventTitle},transcript.rawTranscript);
+  const mainTask={id:uuid('task'),title:contextualTaskTitle(staged.calendarEventTitle||transcriptTitle,staged.taskTitle),notes:[staged.taskDescription,`Source transcript: ${staged.transcriptId}`,transcriptTitle?`Transcript title: ${transcriptTitle}`:'',`Supporting quote: “${staged.sourceQuote}”`].filter(Boolean).join('\n\n'),contactName:staged.assignedToName||'',dueDate:staged.dueDate||null,priority:staged.priority||'medium',completed:false,source:'transcript',sourceId:staged.transcriptId,transcriptId:staged.transcriptId,transcriptTitle,calendarEventId:transcript.calendarEventId||staged.calendarEventId||'',calendarEventTitle:staged.calendarEventTitle||transcriptTitle,details:[{transcriptId:staged.transcriptId,transcriptTaskId:staged.taskId,transcriptTitle,calendarEventId:transcript.calendarEventId||staged.calendarEventId||'',calendarEventTitle:staged.calendarEventTitle||transcriptTitle,sourceQuote:staged.sourceQuote}],createdAt:new Date().toISOString()};
+  await saveTask(mainTask);await updateStagedTranscriptTask(staged.taskId,{status:'created',needsApproval:false});await logTranscriptAction(staged.transcriptId,'task_created',mainTask.id,'completed');return mainTask;
+}
+async function processTranscriptPayload(payload){
+  const transcript=String(payload.transcript||payload.rawText||'').trim();if(!transcript)throw new Error('Missing transcript');
+  const title=transcriptDisplayTitleFromPayload(payload,transcript),sourceId=payload.savedTranscriptId||payload.id||payload.transcriptId||payload.sourceId;if(!sourceId)throw new Error('Transcript must be saved before processing');
+  await updateTranscriptIndexStatus(sourceId,{meetingTitle:title,calendarEventId:payload.meetingMatch?.calendarEventId||payload.meetingMatch?.meetingEventId||payload.calendarEventId||payload.calendar_event_id||'',meetingDatetime:payload.meetingMatch?.startTime||payload.meetingDatetime||payload.meeting_datetime||payload.timestamp||null});
+  await clearTranscriptStaging(sourceId);await updateTranscriptIndexStatus(sourceId,{processingStatus:'matching_participants',summaryStatus:'pending'});
+  const participants=await matchTranscriptParticipants(payload,sourceId,transcript);
+  await updateTranscriptIndexStatus(sourceId,{processingStatus:'summarizing'});
+  const system=[VAL_SYSTEM_PROMPT,'Create safe, auditable transcript intelligence. Return strict JSON only.','Required keys: executiveSummary, clientSummary, internalNotes, keyDecisions, openQuestions, relationshipUpdates, tasks, contactUpdates, followupDrafts.','tasks: taskTitle, taskDescription, assignedToName, dueDate, priority, confidence (0-1), sourceQuote copied exactly from transcript.','contactUpdates: contactName, contactId if known, fieldToUpdate, oldValue, newValue, reason, confidence (0-1), sourceQuote copied exactly.','Never guess identity or assignment. Use null and low confidence when unclear. Do not extract completed work as a task.'].join('\n');
+  let parsed={},modelFailed='';
+  try{const raw=await callValModel({system,user:`Meeting: ${title}\n\nTranscript:\n${transcript.slice(0,30000)}`,maxTokens:2600,temperature:0.15,json:true});parsed=JSON.parse(raw);}
+  catch(e){
+    modelFailed=e.message;const lines=transcript.split(/\n+/).map(line=>line.trim()).filter(Boolean),fallbackTasks=lines.filter(line=>/\b(I|we)\s+(will|need to|can|should)|\b(follow up|send|schedule|review|prepare|update|introduce)\b/i.test(line)&&!/\b(already|completed|finished|sent)\b/i.test(line)).slice(0,12).map(line=>{const split=line.match(/^([^:]{2,80}):\s*(.+)$/),quote=split?split[2]:line,person=split?split[1]:'';return {taskTitle:cleanTaskTitle(quote).replace(/^I\s+will\s+/i,'').replace(/^we\s+will\s+/i,''),taskDescription:'Commitment extracted by the deterministic fallback processor.',assignedToName:person,dueDate:null,priority:'medium',confidence:0.55,sourceQuote:line};}),decisions=lines.filter(line=>/\b(decided|agreed|approved|selected|chose)\b/i.test(line)).slice(0,10);
+    parsed={executiveSummary:transcript.replace(/\s+/g,' ').slice(0,900),clientSummary:'',internalNotes:'Automated fallback summary; model processing needs review.',keyDecisions:decisions,openQuestions:lines.filter(line=>/\?$/.test(line)).slice(0,10),relationshipUpdates:[],tasks:fallbackTasks,contactUpdates:[],followupDrafts:[]};
+  }
+  const summary=await saveTranscriptSummary(sourceId,parsed);await updateTranscriptIndexStatus(sourceId,{summaryStatus:modelFailed?'fallback_complete':'complete',processingStatus:'extracting_actions'});
+  if(modelFailed)await logTranscriptAction(sourceId,'failed_action','summary_model','failed',modelFailed);
+  const stagedTasks=[],createdTasks=[],createdDrafts=[];
+  for(const item of (Array.isArray(parsed.tasks)?parsed.tasks:Array.isArray(parsed.actionItems)?parsed.actionItems:[]).slice(0,20)){
+    const assignedName=item.assignedToName||item.assignedPerson||item.person||item.contactName||'',participant=participants.find(p=>looseNameScore(assignedName,p.speakerNameRaw)>=0.8||looseNameScore(assignedName,p.matchedContactName)>=0.8),confidence=Math.max(0,Math.min(1,Number(item.confidence)||0));
+    const owner=isOwnerRelationship({name:assignedName,email:participant?.matchedEmail||''}),safeMatch=!!participant&&!participant.needsReview&&participant.matchConfidence>=TRANSCRIPT_SAFE_MATCH_CONFIDENCE;
+    const staged={taskId:uuid('tr_task'),transcriptId:sourceId,assignedToContactId:safeMatch?participant.matchedContactId:'',assignedToName:assignedName||participant?.matchedContactName||'',taskTitle:contextualTaskTitle(title,item.taskTitle||item.title),taskDescription:item.taskDescription||item.description||item.notes||'',dueDate:item.dueDate||null,priority:item.priority||'medium',confidence,status:'staged',needsApproval:!(owner||safeMatch),sourceQuote:transcriptSupportingQuote(transcript,item.sourceQuote||item.evidence),calendarEventId:payload.meetingMatch?.calendarEventId||payload.meetingMatch?.meetingEventId||payload.calendarEventId||payload.calendar_event_id||'',calendarEventTitle:title,createdAt:new Date().toISOString()};
+    if(!staged.taskTitle)continue;await saveStagedTranscriptTask(staged);stagedTasks.push(staged);if(owner||safeMatch)createdTasks.push(await promoteTranscriptTask(staged));
+  }
+  for(const item of (Array.isArray(parsed.contactUpdates)?parsed.contactUpdates:[]).slice(0,20)){
+    const participant=participants.find(p=>(item.contactId&&p.matchedContactId===item.contactId)||looseNameScore(item.contactName,p.matchedContactName||p.speakerNameRaw)>=0.8);
+    await saveStagedContactUpdate({updateId:uuid('tr_update'),transcriptId:sourceId,contactId:participant?.matchedContactId||item.contactId||'',fieldToUpdate:item.fieldToUpdate||item.field||'notes',oldValue:String(item.oldValue||''),newValue:String(item.newValue||''),reason:item.reason||'',sourceQuote:transcriptSupportingQuote(transcript,item.sourceQuote),confidence:Math.max(0,Math.min(1,Number(item.confidence)||0)),approved:false,createdAt:new Date().toISOString()});
+  }
+  const recapDraft=await saveMeetingRecapDraft({transcriptId:sourceId,title,summary,participants,tasks:stagedTasks,transcriptText:transcript}).catch(async e=>{await logTranscriptAction(sourceId,'failed_action','meeting_recap_draft','failed',e.message).catch(()=>{});return null;});
+  if(recapDraft){createdDrafts.push(recapDraft);await logTranscriptAction(sourceId,'email_draft_created',recapDraft.id||'','completed');}
+  for(const draft of (Array.isArray(parsed.followupDrafts)?parsed.followupDrafts:[]).slice(0,8)){const body=draft.body||draft.message||'';if(!body.trim())continue;const saved=await saveInternalDraft({draftType:draft.draftType||draft.type||'follow_up',provider:'internal',subject:draft.subject||`Follow-up: ${title}`,body,status:'draft',sourceContext:{source:'transcript_intelligence',transcriptId:sourceId,transcriptTitle:title,draftKind:draft.draftType||draft.type||'follow_up',sourceQuote:transcriptSupportingQuote(transcript,draft.sourceQuote)}});createdDrafts.push(saved);await logTranscriptAction(sourceId,'email_draft_created',saved.id||'','completed');}
+  await updateTranscriptIndexStatus(sourceId,{processingStatus:'complete',summaryStatus:modelFailed?'fallback_complete':'complete'});
+  return {analysis:parsed,summary,participants,stagedTasks,createdTasks,createdDrafts,counts:{participants:participants.length,tasksExtracted:stagedTasks.length,tasksCreated:createdTasks.length,reviewItems:participants.filter(p=>p.needsReview).length+stagedTasks.filter(t=>t.needsApproval).length}};
+}
+function transcriptUiRecord(record,{includeText=false}={}){
+  const metadata=record.metadata||{};
+  const rawText=String(record.rawText||record.raw_text||'');
+  const actionItems=Array.isArray(metadata.actionItems)?metadata.actionItems:Array.isArray(metadata.analysis?.actionItems)?metadata.analysis.actionItems:extractOpenLoopsFromText(rawText,`transcript:${record.id}`,record.createdAt).slice(0,12);
+  const openActions=actionItems.filter(item=>typeof item==='string'||(!item.completed&&!['done','completed','closed'].includes(String(item.status||'').toLowerCase())));
+  const people=Array.isArray(metadata.people)?metadata.people:splitPeopleFromText([record.title,rawText,JSON.stringify(metadata)].join(' ')).slice(0,12);
+  const summary=metadata.summary||metadata.analysis?.summary||rawText.replace(/\s+/g,' ').trim().slice(0,420);
+  const source=metadata.source||metadata.provider||metadata.platform||record.type||'webhook';
+  const reviewStatus=String(metadata.reviewStatus||metadata.review_status||metadata.status||(openActions.length?'needs_review':'unreviewed')).toLowerCase().replace(/\s+/g,'_');
+  const createdAt=record.createdAt||metadata.created_at||metadata.timestamp||'';
+  const receivedAt=metadata.receivedAt||metadata.received_at||createdAt;
+  const title=transcriptDisplayTitleFromPayload({...metadata,...record,title:record.title||metadata.title,metadata},rawText);
+  return {
+    id:record.id,type:record.type||'transcript',title,
+    createdAt,receivedAt,source,status:reviewStatus,reviewStatus,
+    summary,preview:rawText.replace(/\s+/g,' ').trim().slice(0,260),contactId:metadata.contact_id||metadata.contactId||'',
+    contactName:metadata.contact_name||metadata.contactName||metadata.personName||'',company:metadata.company||metadata.companyName||'',opportunityId:metadata.opportunity_id||metadata.opportunityId||'',
+    meetingId:metadata.meeting_id||metadata.meetingId||metadata.calendarEventId||'',relatedOpportunity:metadata.opportunityName||metadata.opportunity||'',
+    keyDiscussionPoints:metadata.keyDiscussionPoints||metadata.discussionPoints||[],actionItems,openActionCount:openActions.length,promisedFollowUps:metadata.promisedFollowUps||metadata.followups||actionItems,
+    people,sourcePayloadMetadata:metadata,metadata,...(includeText?{transcriptText:rawText}:{})
+  };
+}
+function normalizedTranscriptWebhookPayload(body={}){
+  const root=(body.payload&&typeof body.payload==='object'?body.payload:null)||(body.data&&typeof body.data==='object'?body.data:null)||(body.event&&typeof body.event==='object'?body.event:null)||body;
+  const transcriptObject=root.transcript&&typeof root.transcript==='object'?root.transcript:{};
+  const segments=root.segments||root.sentences||transcriptObject.segments||transcriptObject.sentences||[];
+  const segmentText=Array.isArray(segments)?segments.map(segment=>typeof segment==='string'?segment:[segment.speaker||segment.speakerName||'',segment.text||segment.content||segment.transcript||''].filter(Boolean).join(': ')).filter(Boolean).join('\n'):'';
+  const transcriptText=[root.transcript,root.rawText,root.raw_text,root.transcriptText,root.transcript_text,root.text,root.content,root.body,transcriptObject.text,transcriptObject.content,segmentText].find(value=>typeof value==='string'&&value.trim())||'';
+  const rawTitle=root.title||root.meetingTitle||root.meeting_name||root.callTitle||root.call_name||transcriptObject.title||body.title||'';
+  const source=root.source||root.provider||root.platform||body.source||'webhook';
+  const sourcePayloadMetadata={};
+  for(const [key,value] of Object.entries(body)){
+    if(/^(transcript|raw_?text|transcript_?text|text|content|body|segments|sentences)$/i.test(key))continue;
+    sourcePayloadMetadata[key]=value&&typeof value==='object'?JSON.parse(JSON.stringify(value,(nestedKey,nestedValue)=>/^(transcript|raw_?text|transcript_?text|text|content|body|segments|sentences)$/i.test(nestedKey)?undefined:nestedValue)):value;
+  }
+  const metadata={...(body.metadata||{}),...(root.metadata||{}),sourcePayloadMetadata};
+  const title=transcriptDisplayTitleFromPayload({...body,...root,title:rawTitle,metadata},transcriptText);
+  return {...body,...root,title,source,transcript:transcriptText,metadata,receivedAt:new Date().toISOString(),timestamp:root.timestamp||root.createdAt||root.created_at||root.date||body.timestamp||null};
+}
+app.get('/api/val/transcripts',async(req,res)=>{
+  try{
+    console.log('[transcripts] retrieval requested',{userId:VAL_USER_ID,days:req.query.days||'all',limit:req.query.limit||'default'});
+    const limit=Math.max(1,Math.min(250,Number(req.query.limit)||100));
+    const data=await transcriptIndexData();
+    if(data.transcripts.length){const transcripts=data.transcripts.slice(0,limit).map(row=>{const detail=transcriptDetailFromIndex(data,row);delete detail.transcriptText;return detail;});return res.json({ok:true,transcripts,counts:{total:transcripts.length,needsReview:transcripts.filter(t=>t.reviewCount>0).length,withTasks:transcripts.filter(t=>t.taskCount>0).length,failedProcessing:transcripts.filter(t=>/fail|error/i.test(String(t.processingStatus||t.summaryStatus||''))||(t.actionLog||[]).some(a=>a.status==='failed'||a.actionType==='failed_action')).length}});}
+    const days=Math.max(1,Math.min(3650,Number(req.query.days)||365)),transcripts=(await transcriptArchiveRecords(days,limit)).map(record=>transcriptUiRecord(record));
+    res.json({ok:true,transcripts,counts:{total:transcripts.length,needsReview:transcripts.filter(t=>['new','unreviewed','needs_review'].includes(t.reviewStatus)).length,withOpenActions:transcripts.filter(t=>t.openActionCount>0).length,failedProcessing:transcripts.filter(t=>/fail|error/i.test(String(t.processingStatus||t.summaryStatus||t.status||''))).length}});
+  }catch(e){console.error('[transcripts] retrieval failed',e);res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/val/transcripts/review',async(req,res)=>{
+  try{const data=await transcriptIndexData();res.json({ok:true,participants:data.participants.filter(row=>row.needsReview),tasks:data.tasks.filter(row=>row.needsApproval),contactUpdates:data.contactUpdates.filter(row=>!row.approved)});}catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.get('/api/val/transcripts/:transcriptId',async(req,res)=>{
+  try{
+    const id=decodeURIComponent(req.params.transcriptId);
+    const data=await transcriptIndexData(id);if(data.transcripts[0]){const transcript=transcriptDetailFromIndex(data,data.transcripts[0]);transcript.drafts=(await listDrafts()).filter(d=>String(d.sourceContext?.transcriptId||'')===String(id));await auditLog({req,action:'transcript_opened',resourceType:'transcript',resourceId:id,metadata:{title:transcript.title||''},success:true}).catch(()=>{});return res.json({ok:true,transcript});}
+    const record=(await transcriptArchiveRecords(3650,1000)).find(t=>String(t.id)===id);
+    if(!record) return res.status(404).json({ok:false,error:'Transcript not found'});
+    const transcript=transcriptUiRecord(record,{includeText:true});transcript.drafts=(await listDrafts()).filter(d=>String(d.sourceContext?.transcriptId||'')===String(id));await auditLog({req,action:'transcript_opened',resourceType:'transcript',resourceId:id,metadata:{title:transcript.title||''},success:true}).catch(()=>{});res.json({ok:true,transcript});
+  }catch(e){console.error('[transcripts] detail retrieval failed',e);res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/val/transcripts',async(req,res)=>{
+  const payload=normalizedTranscriptWebhookPayload(req.body||{}),transcriptText=payload.transcript||'';
+  console.log('[transcripts] webhook received',{title:payload.title,source:payload.source,characters:transcriptText.length});
+  if(!transcriptText.trim())return res.status(400).json({ok:false,error:'A usable transcript text field is required. Accepted fields include transcript, rawText, transcriptText, text, content, body, or speaker segments.'});
+  try{
+    const saved=await saveTranscript({...payload,reviewStatus:payload.reviewStatus||payload.review_status||'new'});
+    await auditLog({req,action:'transcript_processed',resourceType:'transcript',resourceId:saved.id,metadata:{title:payload.title,source:payload.source},success:true}).catch(()=>{});
+    console.log('[transcripts] saved successfully',{id:saved.id,title:payload.title,source:payload.source});
+    const transcriptRecord={id:saved.id,title:payload.title||saved.type,rawText:transcriptText,metadata:payload,createdAt:payload.timestamp||payload.createdAt||payload.receivedAt};
+    const meetingMatch=await linkTranscriptToBestMeeting(transcriptRecord).catch(e=>{console.warn('[transcripts] meeting link failed',e.message);return null;});
+    if(meetingMatch)await updateTranscriptIndexStatus(saved.id,{meetingTitle:meetingMatch.meetingTitle||meetingMatch.calendarEventTitle,calendarEventId:meetingMatch.calendarEventId||meetingMatch.meetingEventId||''}).catch(()=>{});
+    try{
+      const processed=await processTranscriptPayload({...payload,savedTranscriptId:saved.id,meetingMatch});
+      await updateTranscriptMetadata(saved.id,{analysis:processed.analysis,summary:processed.analysis?.summary||'',actionItems:processed.analysis?.actionItems||[],people:processed.analysis?.people||[],reviewStatus:'needs_review',processedAt:new Date().toISOString()});
+      return res.status(201).json({ok:true,...saved,...processed,saved:true,processed:true});
+    }catch(processError){
+      console.error('[transcripts] processing failed after durable save',{id:saved.id,error:processError.message});
+      const fallback={executiveSummary:transcriptText.replace(/\s+/g,' ').slice(0,900),clientSummary:'',internalNotes:'Processing failed; transcript retained for review.',keyDecisions:[],openQuestions:[],relationshipUpdates:[]};
+      await saveTranscriptSummary(saved.id,fallback).catch(()=>{});await updateTranscriptIndexStatus(saved.id,{processingStatus:'failed',summaryStatus:'fallback_complete'}).catch(()=>{});await logTranscriptAction(saved.id,'failed_action','pipeline','failed',processError.message).catch(()=>{});
+      return res.status(202).json({ok:true,...saved,saved:true,processed:false,processingError:processError.message,meetingMatch});
+    }
+  }catch(e){console.error('[transcripts] save failed',e);res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/val/transcripts/tasks/:taskId/approve',async(req,res)=>{
+  try{const data=await transcriptIndexData(),task=data.tasks.find(row=>row.taskId===req.params.taskId);if(!task)return res.status(404).json({ok:false,error:'Staged task not found'});if(task.status==='created')return res.json({ok:true,task,alreadyCreated:true});const created=await promoteTranscriptTask(task);res.json({ok:true,task:created});}catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/val/transcripts/participants/:participantId/approve',async(req,res)=>{
+  try{
+    const data=await transcriptIndexData(),participant=data.participants.find(row=>row.participantId===req.params.participantId);if(!participant)return res.status(404).json({ok:false,error:'Participant not found'});
+    const updates={matchedContactId:req.body.contactId||participant.matchedContactId,matchedContactName:req.body.contactName||participant.matchedContactName,matchedEmail:req.body.email||participant.matchedEmail,matchedPhone:req.body.phone||participant.matchedPhone,matchedCompany:req.body.company||participant.matchedCompany,matchConfidence:1,matchReason:req.body.reason||'User-approved participant match',needsReview:false};
+    if(!updates.matchedContactId)return res.status(400).json({ok:false,error:'Choose a specific CRM contact before approving this participant match'});
+    if(DEMO_MODE)Object.assign((transcriptDemoArray('transcriptParticipants')||[]).find(row=>row.participantId===participant.participantId),updates);else if(pgPool)await dbQuery('update transcript_participants set matched_contact_id=$1,matched_contact_name=$2,matched_email=$3,matched_phone=$4,matched_company=$5,match_confidence=1,match_reason=$6,needs_review=false where participant_id=$7',[updates.matchedContactId,updates.matchedContactName,updates.matchedEmail,updates.matchedPhone,updates.matchedCompany,updates.matchReason,participant.participantId]);else{const store=valStore();Object.assign(store.transcriptParticipants.find(row=>row.participantId===participant.participantId),updates);saveValStore(store);}await logTranscriptAction(participant.transcriptId,'participant_match_approved',participant.participantId,'completed');res.json({ok:true,participant:{...participant,...updates}});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/val/transcripts/contact-updates/:updateId/approve',async(req,res)=>{
+  try{
+    const data=await transcriptIndexData(),update=data.contactUpdates.find(row=>row.updateId===req.params.updateId);if(!update)return res.status(404).json({ok:false,error:'Contact update not found'});if(!update.contactId)return res.status(400).json({ok:false,error:'Approve a participant/contact match before applying this update'});
+    const allowed={email:'email',phone:'phone',firstName:'firstName',lastName:'lastName',companyName:'companyName',address1:'address1',city:'city',state:'state',postalCode:'postalCode'};const field=allowed[update.fieldToUpdate];if(!field)return res.status(400).json({ok:false,error:'This field cannot be written automatically; keep it as a reviewed intelligence note'});
+    try{await ghlStrict('PUT',`/contacts/${encodeURIComponent(update.contactId)}`,{[field]:update.newValue});if(DEMO_MODE){const row=(transcriptDemoArray('transcriptContactUpdates')||[]).find(x=>x.updateId===update.updateId);if(row)row.approved=true;}else if(pgPool)await dbQuery('update transcript_contact_updates set approved=true where update_id=$1',[update.updateId]);else{const store=valStore(),row=store.transcriptContactUpdates.find(x=>x.updateId===update.updateId);if(row)row.approved=true;saveValStore(store);}await logTranscriptAction(update.transcriptId,'contact_updated',update.contactId,'completed');res.json({ok:true,update:{...update,approved:true}});}catch(error){await logTranscriptAction(update.transcriptId,'failed_action',update.contactId,'failed',error.message);throw error;}
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/val/transcripts/:transcriptId/actions',async(req,res)=>{
+  try{
+    const id=decodeURIComponent(req.params.transcriptId),record=(await transcriptArchiveRecords(3650,1000)).find(t=>String(t.id)===id);
+    if(!record)return res.status(404).json({ok:false,error:'Transcript not found'});
+    const transcript=transcriptUiRecord(record,{includeText:true}),action=String(req.body.action||'');
+    if(action==='create_task'){
+      const first=(transcript.actionItems||[]).find(item=>typeof item==='string'||(!item.completed&&!['done','completed'].includes(String(item.status||'').toLowerCase())));
+      const title=req.body.title||(typeof first==='string'?first:first?.title||first?.text)||`Follow up on ${transcript.title}`;
+      const staged={taskId:uuid('tr_task'),transcriptId:transcript.id,assignedToContactId:transcript.contactId||'',assignedToName:transcript.contactName||'',taskTitle:contextualTaskTitle(transcript.title,title),taskDescription:`User-created from transcript: ${transcript.title}`,dueDate:req.body.dueDate||null,priority:req.body.priority||'medium',confidence:1,status:'staged',needsApproval:false,sourceQuote:transcriptSupportingQuote(transcript.transcriptText,req.body.sourceQuote),calendarEventId:transcript.meetingId||'',calendarEventTitle:transcript.title,createdAt:new Date().toISOString()};
+      await saveStagedTranscriptTask(staged);const task=await promoteTranscriptTask(staged);return res.json({ok:true,task});
+    }
+    if(action==='draft_followup'){
+      const summary=transcript.summary&&typeof transcript.summary==='object'?transcript.summary:{executiveSummary:transcript.summary||transcript.preview||''};
+      const existingTasks=(transcript.tasks||[]).length?transcript.tasks:transcript.actionItems||[];
+      const draft=await saveMeetingRecapDraft({transcriptId:transcript.id,title:transcript.title,summary,participants:transcript.participants||[],tasks:existingTasks,transcriptText:transcript.transcriptText||''});
+      await logTranscriptAction(transcript.id,'email_draft_created',draft.id||'','completed');return res.json({ok:true,draft});
+    }
+    if(action==='mark_reviewed'){await updateTranscriptMetadata(id,{reviewStatus:'reviewed',reviewedAt:new Date().toISOString()});return res.json({ok:true,status:'reviewed'});}
+    res.status(400).json({ok:false,error:'Unsupported transcript action'});
+  }catch(e){console.error('[transcripts] action failed',e);res.status(500).json({ok:false,error:e.message});}
+});
+app.post('/api/val/transcripts/process',async(req,res)=>{try{const body=normalizedTranscriptWebhookPayload(req.body||{}),transcriptText=body.transcript||'',title=body.title||'Processed transcript';if(!transcriptText.trim())return res.status(400).json({ok:false,error:'Missing transcript'});const saved=await saveTranscript({...body,type:'processed_transcript',title,transcript:transcriptText,importance:3});const transcriptRecord={id:saved.id,title,rawText:transcriptText,metadata:body,createdAt:body.timestamp||body.createdAt||new Date().toISOString()};const meetingMatch=await linkTranscriptToBestMeeting(transcriptRecord).catch(()=>null);if(meetingMatch)await updateTranscriptIndexStatus(saved.id,{meetingTitle:meetingMatch.meetingTitle||meetingMatch.calendarEventTitle,calendarEventId:meetingMatch.calendarEventId||meetingMatch.meetingEventId||''}).catch(()=>{});const result={ok:true,...saved,...await processTranscriptPayload({...body,transcript:transcriptText,title,savedTranscriptId:saved.id,meetingMatch})};await auditLog({req,action:'transcript_processed',resourceType:'transcript',resourceId:saved.id,metadata:{title,source:body.source||''},success:true}).catch(()=>{});res.json(result);}catch(e){res.status(500).json({error:e.message});}});
 app.post('/api/val/conversations',async(req,res)=>{try{res.json({ok:true,...await saveConversation(req.body||{})});}catch(e){res.status(500).json({error:e.message});}});
+app.post('/api/val/memory/condense',async(req,res)=>{try{res.json(await condenseOlderMemory());}catch(e){res.status(500).json({ok:false,error:e.message});}});
+app.patch('/api/val/conversations/:id',async(req,res)=>{
+  try{
+    const id=String(req.params.id||''),title=String(req.body?.title||'').trim().slice(0,120);
+    if(!title)return res.status(400).json({ok:false,error:'Conversation title is required'});
+    await valDbReady;
+    if(DEMO_MODE){
+      const state=demoState(req,res);const row=(state.savedConversations||[]).find(c=>c.id===id);
+      if(row){row.title=title;row.updated_at=new Date().toISOString();}
+    }else if(pgPool){
+      const result=await dbQuery('update val_conversations set title=$1,updated_at=now() where id=$2 and user_id=$3 returning id,title,updated_at',[title,id,VAL_USER_ID]);
+      if(!result.rows[0])return res.status(404).json({ok:false,error:'Conversation not found'});
+    }else{
+      const store=valStore(),row=store.conversations.find(c=>c.id===id&&c.userId===VAL_USER_ID);
+      if(!row)return res.status(404).json({ok:false,error:'Conversation not found'});
+      row.title=title;row.updatedAt=new Date().toISOString();saveValStore(store);
+    }
+    res.json({ok:true,id,title});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
+app.patch('/api/val/conversations/:id/context',async(req,res)=>{
+  try{
+    const id=String(req.params.id||''),contact=req.body?.contact&&typeof req.body.contact==='object'?req.body.contact:null,company=String(req.body?.company||contact?.company||'').trim();
+    const context=contact?{contact:{id:contact.id||contact.contactId||'',name:contact.name||'',email:contact.email||'',company},confirmedBy:'user',confirmedAt:new Date().toISOString()}:{};
+    await valDbReady;
+    if(DEMO_MODE){
+      const state=demoState(req,res),row=(state.savedConversations||[]).find(c=>c.id===id);if(row)row.metadata={...(row.metadata||{}),context};
+    }else if(pgPool){
+      const result=await dbQuery("update val_conversations set metadata=coalesce(metadata,'{}'::jsonb)||$1::jsonb,updated_at=now() where id=$2 and user_id=$3 returning id",[JSON.stringify({context}),id,VAL_USER_ID]);
+      if(!result.rows[0])return res.status(404).json({ok:false,error:'Conversation not found'});
+    }else{
+      const store=valStore(),row=store.conversations.find(c=>c.id===id&&c.userId===VAL_USER_ID);if(!row)return res.status(404).json({ok:false,error:'Conversation not found'});row.metadata={...(row.metadata||{}),context};saveValStore(store);
+    }
+    if(contact)await saveMemoryItem({kind:'conversation_entity_link',summary:`Conversation linked to ${contact.name||contact.email||company}`,rawText:JSON.stringify({conversationId:id,contact,company}),importance:3,metadata:{conversationId:id,contactId:contact.id||contact.contactId||'',contactName:contact.name||'',contactEmail:contact.email||'',company,confirmed:true}});
+    res.json({ok:true,id,context});
+  }catch(e){res.status(500).json({ok:false,error:e.message});}
+});
 app.post('/api/val/context/resolve-contact',async(req,res)=>{try{res.json(await resolveContactFromContext(req.body||{}));}catch(e){res.status(500).json({ok:false,error:e.message});}});
 app.post('/api/val/context/resolve-meeting',async(req,res)=>{try{res.json(await resolveMeetingContext(req.body||{}));}catch(e){res.status(500).json({ok:false,error:e.message});}});
 app.post('/api/val/context/link-transcript',async(req,res)=>{
@@ -9655,13 +14775,15 @@ app.post('/api/relationships/actions',async(req,res)=>{
       return res.json({ok:true,draft});
     }
     if(action==='create_task'){
-      const task={id:uuid('task'),title:req.body.title||contact.recommendedAction||`Follow up with ${contact.name||contact.email}`,contactName:contact.name||contact.email||'',dueDate:req.body.dueDate||null,notes:req.body.notes||`Created from Relationship Review. Score: ${contact.score||'unknown'}`,details:[{text:'Created from Relationship Review',ts:new Date().toISOString()}],completed:false,createdAt:new Date().toISOString()};
+      const defaultDue=new Date(Date.now()+2*24*60*60*1000).toISOString();
+      const task={id:uuid('task'),title:req.body.title||contact.recommendedAction||`Follow up with ${contact.name||contact.email}`,contactName:contact.name||contact.email||'',contactId:contact.contactId||contact.id||'',dueDate:req.body.dueDate||defaultDue,priority:req.body.priority||((contact.score||0)>=70?'high':'medium'),notes:req.body.notes||`${contact.reason||'Created from Relationship Review.'}\n\nRecommended action: ${contact.recommendedAction||'Review relationship history.'}`,details:[{text:'Created from Relationship Review',ts:new Date().toISOString()}],completed:false,createdAt:new Date().toISOString()};
       await saveTask(task);
       return res.json({ok:true,task});
     }
     if(['mark_vip','snooze','not_important'].includes(action)){
-      await saveMemoryItem({kind:'relationship_preference',summary:`${action}: ${contact.name||contact.email}`,rawText:JSON.stringify({action,contact,until:req.body.until||''}),importance:action==='mark_vip'?4:2,metadata:{source:'relationship_review',action,contact}});
-      return res.json({ok:true,status:'saved'});
+      const until=action==='snooze'?(req.body.until||new Date(Date.now()+7*24*60*60*1000).toISOString()):'';
+      await saveMemoryItem({kind:'relationship_preference',summary:`${action}: ${contact.name||contact.email}`,rawText:JSON.stringify({action,contact,until}),importance:action==='mark_vip'?4:2,metadata:{source:'relationship_review',action,contact,until,identityKey:personKey(contact.name,contact.email)}});
+      return res.json({ok:true,status:'saved',action,until});
     }
     if(action==='brainstorm'){
       if(DEMO_MODE){
@@ -9701,15 +14823,46 @@ app.post('/api/val/intelligence',async(req,res)=>{
 app.post('/api/val/chat',async(req,res)=>{
   try{
     const messages=Array.isArray(req.body.messages)?req.body.messages:[],lastUser=[...messages].reverse().find(m=>m.role==='user')?.content||'',memoryQuery=messages.slice(-10).map(m=>m.content||'').join('\n').slice(-6000),dashboard=req.body.dashboard||{};
-    if(DEMO_MODE){const s=demoState(req,res);return res.json({message:{role:'assistant',content:demoChatResponse(lastUser,s)},demo:true});}
+    const conversationId=String(req.body.conversationId||'').trim()||uuid('chat');
+    const conversationTitle=String(req.body.title||lastUser||'New conversation').trim().slice(0,120)||'New conversation';
+    async function sendChat(content,extra={}){
+      let saved=null,saveWarning='';
+      const fullMessages=messages.concat({role:'assistant',content});
+      try{
+        if(!DEMO_MODE&&process.env.DATABASE_URL&&!pgPool) throw new Error('Chat could not be saved because Postgres is not connected. In Railway, confirm your Postgres service is attached and DATABASE_URL exists in Variables.');
+        saved=await saveConversation({id:conversationId,title:conversationTitle,source:req.body.channel||'chat',messages:fullMessages,metadata:{channel:req.body.channel||'chat',savedBy:'chat_route'}});
+      }catch(saveError){
+        saveWarning=saveError.message||'Chat could not be saved because Postgres is not connected. In Railway, confirm your Postgres service is attached and DATABASE_URL exists in Variables.';
+      }
+      return res.json({message:{role:'assistant',content},conversationId:saved?.id||conversationId,saved:!saveWarning,saveWarning,...extra});
+    }
+    if(DEMO_MODE){const s=demoState(req,res);return sendChat(demoChatResponse(lastUser,s),{demo:true});}
+    if(/\b(show|list|find)\b[\s\S]{0,40}\bunscheduled tasks|open loops\b/i.test(lastUser)){
+      const loops=await openLoopsSummary();
+      const lines=(loops.unscheduled||[]).slice(0,10).map((t,i)=>`${i+1}. ${t.title}${t.dueDate?` — due ${new Date(t.dueDate).toLocaleDateString()}`:''}`).join('\n')||'No unscheduled open tasks found.';
+      return sendChat(`Open loops: ${loops.openCount} open, ${loops.unscheduledCount} unscheduled, ${loops.overdueCount} overdue.\n\n${lines}`,{openLoops:loops});
+    }
+    if(/\b(calendarize|schedule time|put .*calendar|block time)\b/i.test(lastUser)&&/\btask|tasks|open loops|follow[- ]?up/i.test(lastUser)){
+      const loops=await openLoopsSummary();
+      const task=(loops.unscheduled||[])[0];
+      if(!task)return sendChat('I do not see any unscheduled open tasks right now.',{openLoops:loops});
+      const suggestedSlots=await suggestTaskSlots(task).catch(()=>[]);
+      const slotLines=suggestedSlots.slice(0,3).map((s,i)=>`${i+1}. ${s.label}`).join('\n');
+      return sendChat(`I found the next unscheduled task: ${task.title}.\n\nSuggested protected work blocks:\n${slotLines||'No safe slot found yet.'}\n\nOpen Tasks and press Calendarize to confirm a private busy block with no attendees or meeting link.`,{taskScheduling:{task,suggestedSlots}});
+    }
+    if(inboxCommandIntent(lastUser)){
+      const inbox=await runInboxCommand(lastUser,{maxResults:5});
+      const sourceLines=(inbox.sources||[]).slice(0,5).map((email,i)=>`${i+1}. ${email.subject||'(No subject)'} — ${email.from?.name||email.from?.email||'unknown'} — ${email.date?new Date(email.date).toLocaleString():''}\n   ${email.snippet||''}`).join('\n');
+      return sendChat([inbox.answer,sourceLines?'\nSources:\n'+sourceLines:'',inbox.needsChoice?'\nIf you want me to act on one, tell me which number.':''].filter(Boolean).join('\n'),{inboxCommand:inbox});
+    }
     if(isGoallTestContactRequest(lastUser)){
       const result=await createOrUpdateGoallTestContact();
-      return res.json({message:{role:'assistant',content:goallTestContactSummary(result)},ghlContact:result});
+      return sendChat(goallTestContactSummary(result),{ghlContact:result});
     }
     const inferredGhlAction=await inferGhlActionFromChat(lastUser);
     if(inferredGhlAction){
       const result=await executeValGhlAction(inferredGhlAction);
-      return res.json({message:{role:'assistant',content:result.content||'Done.'},ghlAction:result});
+      return sendChat(result.content||'Done.',{ghlAction:result});
     }
     if(isGoogleDocRewriteRequest(lastUser)){
       try{
@@ -9723,24 +14876,24 @@ app.post('/api/val/chat',async(req,res)=>{
           '',
           `I kept the full rewrite out of chat so you can review and edit it in Docs.`
         ].join('\n');
-        return res.json({message:{role:'assistant',content},googleDocRewrite:result});
+        return sendChat(content,{googleDocRewrite:result});
       }catch(e){
         if(/auth|required|scope|reconnect/i.test(e.message)){
-          return res.json({message:{role:'assistant',content:'I can use the memoir already uploaded into VAL as the source. Google only needs to be reconnected so I can create the rewritten Google Doc output. Open Integration Status, reconnect Google, and approve the Drive/Docs permissions.'}});
+          return sendChat('I can use the memoir already uploaded into VAL as the source. Google only needs to be reconnected so I can create the rewritten Google Doc output. Open Integration Status, reconnect Google, and approve the Drive/Docs permissions.');
         }
-        return res.json({message:{role:'assistant',content:`I tried to rewrite it from the uploaded VAL memoir or Google Docs, but I could not find a readable matching document yet: ${e.message}\n\nUse the exact uploaded file title, Google Doc title, or Google Doc URL, then ask me to rewrite it.`}});
+        return sendChat(`I tried to rewrite it from the uploaded VAL memoir or Google Docs, but I could not find a readable matching document yet: ${e.message}\n\nUse the exact uploaded file title, Google Doc title, or Google Doc URL, then ask me to rewrite it.`);
       }
     }
     const availabilityDoc=await readValUploadedRewriteSource({query:lastUser+'\n'+memoryQuery}).catch(()=>null);
     if(availabilityDoc&&/\b(can you|could you|do you|are you able to)\b[\s\S]{0,80}\b(read|see|access|open)\b/i.test(lastUser)&&/\b(manuscript|memoir|book|document|doc|draft)\b/i.test(lastUser)){
-      return res.json({message:{role:'assistant',content:[
+      return sendChat([
         `Yes. I can read the manuscript already uploaded into VAL.`,
         '',
         `Source: ${availabilityDoc.title}`,
         `Readable characters: ${availabilityDoc.text.length}`,
         '',
         `Google Drive is only needed if you want me to create or update a Google Doc output. For reading and editorial review, I can use the uploaded VAL manuscript.`
-      ].join('\n')}});
+      ].join('\n'));
     }
     const uploadedDocs=await uploadedValDocumentContextForQuery(lastUser+'\n'+memoryQuery).catch(e=>`Uploaded VAL document lookup failed: ${e.message}`);
     const [memory,ghlContext,googleDocs]=await Promise.all([
@@ -9748,12 +14901,19 @@ app.post('/api/val/chat',async(req,res)=>{
       ghlPlatformContext(lastUser+'\n'+memoryQuery,dashboard),
       uploadedDocs?Promise.resolve(''):googleDocsContextForQuery(lastUser+'\n'+memoryQuery).catch(e=>`Google Docs lookup failed: ${e.message}`)
     ]);
-    const system=[VAL_SYSTEM_PROMPT,'Use dashboard context, uploaded VAL document source text, Google Docs source text, platform-wide GHL MCP context, and saved memory when relevant. Do not pretend to know facts that are not present.','When Relevant uploaded VAL document source is present, use it directly. Do not ask for Google Drive, Google Docs, pasted chunks, or uploads. Say plainly that the manuscript is available in VAL only if the user asks whether you can read or access it. Do not begin ordinary editorial responses with source/upload/readability status.','For Michele book/editor responses, every time you name work the user should do, include a "To-do list" section with only the 1 to 5 highest-priority new or updated actions. Do not repeat the entire existing task list. Each to-do must be one concrete action line with enough context to understand why it matters, such as chapter, section, reason, or source. Do not leave recommendations only in prose. For priority/next-step requests, keep the whole chat answer short and let the task board hold the longer list.','When Recent saved VAL memory contains knowledge_document, processed_transcript, or transcript entries, the text after the colon is available source content. Use it directly. Do not say the document or transcript text is not visible unless no relevant memory entries are present.','When Relevant Google Docs source is present, use it directly. Do not ask the user to paste the document or send it in chunks. If Google Docs says reconnect is required, tell the user to reconnect Google from Integration Status and approve Drive/Docs permissions.','When Platform-wide GHL MCP context is present, use GHL contacts, opportunities, tasks, conversations, notes, and call transcripts as current CRM source context.',memory?'Recent saved VAL memory:\n'+memory:'',uploadedDocs?'Relevant uploaded VAL document source:\n'+uploadedDocs:'',googleDocs?'Relevant Google Docs source:\n'+googleDocs:'',ghlContext?'Platform-wide GHL MCP context:\n'+ghlContext:''].filter(Boolean).join('\n\n');
+    const babyStudioContext=await babyStudioPromptContext();
+    const system=[VAL_SYSTEM_PROMPT,babyStudioContext?'Dashboard Studio settings:\n'+babyStudioContext:'','Use dashboard context, uploaded VAL document source text, Google Docs source text, platform-wide GHL MCP context, and saved memory when relevant. Do not pretend to know facts that are not present.','When Relevant uploaded VAL document source is present, use it directly. Do not ask for Google Drive, Google Docs, pasted chunks, or uploads. Say plainly that the manuscript is available in VAL only if the user asks whether you can read or access it. Do not begin ordinary editorial responses with source/upload/readability status.','For Michele book/editor responses, every time you name work the user should do, include a "To-do list" section with only the 1 to 5 highest-priority new or updated actions. Do not repeat the entire existing task list. Each to-do must be one concrete action line with enough context to understand why it matters, such as chapter, section, reason, or source. Do not leave recommendations only in prose. For priority/next-step requests, keep the whole chat answer short and let the task board hold the longer list.','When Recent saved VAL memory contains knowledge_document, processed_transcript, or transcript entries, the text after the colon is available source content. Use it directly. Do not say the document or transcript text is not visible unless no relevant memory entries are present.','When Relevant Google Docs source is present, use it directly. Do not ask the user to paste the document or send it in chunks. If Google Docs says reconnect is required, tell the user to reconnect Google from Integration Status and approve Drive/Docs permissions.','When Platform-wide GHL MCP context is present, use GHL contacts, opportunities, tasks, conversations, notes, and call transcripts as current CRM source context.',memory?'Recent saved VAL memory:\n'+memory:'',uploadedDocs?'Relevant uploaded VAL document source:\n'+uploadedDocs:'',googleDocs?'Relevant Google Docs source:\n'+googleDocs:'',ghlContext?'Platform-wide GHL MCP context:\n'+ghlContext:''].filter(Boolean).join('\n\n');
     const content=await callOpenAIResponses({system,messages,maxTokens:1900,temperature:0.7});
     const finalContent=content||'I could not process that.';
     const createdTasks=await persistAutoTasksFromValResponse({content:finalContent,userQuery:lastUser,action:'chat',source:'val_chat'}).catch(e=>{console.warn('Auto task capture failed:',e.message);return [];});
-    res.json({message:{role:'assistant',content:finalContent},createdTasks,ghlContextAvailable:!!ghlContext});
-  }catch(e){res.status(500).json({error:e.message});}
+    return sendChat(finalContent,{createdTasks,ghlContextAvailable:!!ghlContext});
+  }catch(e){
+    const raw=e.message||'';
+    const message=/OPENAI_KEY not configured|OPENAI_API_KEY|api key/i.test(raw)
+      ? 'Chat is not working because your AI API key is missing. Go to Railway → Variables and add OPENAI_API_KEY. Then redeploy Baby VAL.'
+      : raw;
+    res.status(500).json({error:message});
+  }
 });
 
 async function extractUploadedText(file){
@@ -9801,4 +14961,8 @@ app.post('/api/val/files',upload.any(),async(req,res)=>{
 
 // ════════════════════════════════════════════════════════
 const PORT=process.env.PORT||3000;
-app.listen(PORT,()=>console.log(`VAL proxy running on port ${PORT}`));
+app.listen(PORT,()=>{
+  console.log(`VAL proxy running on port ${PORT}`);
+  setTimeout(()=>condenseOlderMemory().catch(e=>console.error('Memory condensation failed:',e.message)),15000);
+  setInterval(()=>condenseOlderMemory().catch(e=>console.error('Memory condensation failed:',e.message)),24*60*60*1000).unref();
+});

@@ -6,6 +6,9 @@ It gives each person their own AI dashboard that can:
 
 - answer questions in a private web dashboard
 - use an OpenAI API key
+- check setup health for Railway, Postgres, AI chat, Google, and Microsoft
+- customize the Baby VAL name, welcome message, accent color, and simple instructions from Dashboard Studio
+- run the guided **Teach VAL About You** onboarding flow
 - optionally use a Claude/Anthropic API key
 - connect Gmail through Google OAuth
 - save tasks, memory, transcripts, conversations, drafts, and OAuth tokens in Postgres
@@ -29,7 +32,7 @@ Start here:
 ## Required Railway Variables
 
 ```text
-OPENAI_KEY=your OpenAI API key
+OPENAI_API_KEY=your OpenAI API key
 SESSION_SECRET=make up a long random phrase
 VAL_CLIENT_NAME=Your Name
 VAL_CLIENT_SLUG=your-name-val
@@ -48,12 +51,30 @@ DATABASE_URL=your Railway Postgres URL
 Optional:
 
 ```text
+OPENAI_KEY=legacy OpenAI API key fallback
 ANTHROPIC_KEY=your Claude API key
 VAL_CHAT_MODEL=gpt-5.5
 GOOGLE_CLIENT_ID=your Google OAuth client ID
 GOOGLE_CLIENT_SECRET=your Google OAuth client secret
 GOOGLE_REDIRECT_URI=https://your-railway-url.up.railway.app/auth/callback
+TEACH_VAL_WEBHOOK_URL=optional onboarding memory handoff URL
 ```
+
+## New Baby VAL Dashboard Tools
+
+Open **Settings → API Keys & Connections** to see Setup Health. It checks whether Railway variables and Postgres are connected without revealing secret values.
+
+Open **Settings → Dashboard Studio** to edit simple Baby VAL settings directly from the dashboard. These save to the deployment database and affect the dashboard/chat experience without requiring a code change.
+
+Open **Teach VAL** from the dashboard Actions menu or the main dashboard card to run the guided onboarding flow:
+
+- Welcome
+- Voice Interview
+- Knowledge Cards for current projects, important people, lessons, preferences, frustrations, opportunities, and things to remember
+- Review extracted memory
+- Test Send or Send to VAL Memory
+
+Teach VAL onboarding memory is stored separately from contacts, tasks, emails, and transcripts.
 
 ## Gmail Setup
 
