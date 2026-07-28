@@ -7,8 +7,8 @@ presenting a smaller product surface.
 
 **Replacing the files in an existing Baby VAL repository?** Follow
 [START_HERE.md](./START_HERE.md). It is written for a nontechnical user,
-requires no Terminal or coding, and keeps the existing Railway project and
-database connected.
+uses GitHub Desktop instead of browser uploads, requires no Terminal or coding,
+and keeps the existing Railway project and database connected.
 
 ## Visible Experience
 
