@@ -5,9 +5,10 @@ intelligence, evidence, Witnessing, Connections, Board of Observers, text chat,
 Executive Inbox, Transcripts, and VAL Studio architecture while intentionally
 presenting a smaller product surface.
 
-**Installing or replacing an existing Baby VAL?** Follow
-[START_HERE.md](./START_HERE.md). It is written for a nontechnical user and
-requires no Terminal or coding.
+**Replacing the files in an existing Baby VAL repository?** Follow
+[START_HERE.md](./START_HERE.md). It is written for a nontechnical user,
+requires no Terminal or coding, and keeps the existing Railway project and
+database connected.
 
 ## Visible Experience
 
