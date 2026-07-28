@@ -184,6 +184,35 @@ button,a{font:inherit}
   align-items:center;
   gap:12px;
 }
+.baby-witnessing-cta{
+  display:none;
+}
+body.baby-val-edition .baby-witnessing-cta{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:44px;
+  padding:0 19px;
+  border:1px solid rgba(255,249,239,.42);
+  border-radius:7px;
+  background:
+    linear-gradient(110deg,rgba(101,121,91,.92),rgba(207,166,158,.78) 58%,rgba(181,113,127,.9)),
+    rgba(38,27,23,.72);
+  color:#fffaf1;
+  box-shadow:0 16px 34px rgba(9,5,4,.22),0 0 24px rgba(239,185,173,.14);
+  font-size:.76rem;
+  font-weight:600;
+  letter-spacing:.02em;
+  cursor:pointer;
+  transition:transform .18s ease,box-shadow .18s ease,border-color .18s ease;
+}
+body.baby-val-edition .baby-witnessing-cta:hover,
+body.baby-val-edition .baby-witnessing-cta:focus-visible{
+  transform:translateY(-1px);
+  border-color:rgba(255,249,239,.68);
+  box-shadow:0 18px 38px rgba(9,5,4,.28),0 0 30px rgba(239,185,173,.2);
+  outline:none;
+}
 .completion-sound-toggle{
   position:relative;
   display:inline-grid;

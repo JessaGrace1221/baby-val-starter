@@ -18,11 +18,19 @@ test('Baby VAL is the default governed edition', () => {
 
 test('Baby VAL keeps the approved visible foundation surfaces', () => {
   assert.match(html, /observer-board-button/);
+  assert.match(html, /class="baby-witnessing-cta"[^>]*data-val-witnessing-action="true"[^>]*data-workflow-action="valWitnessingResume"[\s\S]*Witnessing Session/);
   assert.match(html, /Executive Inbox/);
   assert.match(html, /Transcripts/);
   assert.match(html, /cowork-notebook/);
   assert.match(html, /Open VAL Studio/);
   assert.match(html, /data-val-drawer-connections/);
+});
+
+test('Witnessing has one permanent prominent navigation label', () => {
+  assert.match(css, /body\.baby-val-edition \.baby-witnessing-cta/);
+  assert.doesNotMatch(html, />Continue Witnessing<\/button>/);
+  assert.match(client, /const actionLabel = 'Witnessing Session'/);
+  assert.doesNotMatch(client, /data-workflow-action="valWitnessingResume">Continue Witnessing<\/button>/);
 });
 
 test('Baby VAL hides non-foundation functions and disables voice', () => {

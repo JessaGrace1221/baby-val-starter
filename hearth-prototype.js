@@ -19502,7 +19502,7 @@ function renderWitnessingPendingEvidence(status = observerBoardState){
         '<li>Observer conclusions remain hidden until the Partnership Promise is committed.</li>',
       '</ul>',
       '<div class="hearth-evidence-actions">',
-        '<button type="button" data-workflow-action="valWitnessingResume">Continue Witnessing</button>',
+        '<button type="button" data-workflow-action="valWitnessingResume">Witnessing Session</button>',
       '</div>',
     '</div>',
     '<div>',
@@ -23302,7 +23302,7 @@ function renderValWitnessingEntry(onboarding = {}){
     return;
   }
   const hasSavedAnswers = imports.length > 0;
-  const actionLabel = hasSavedAnswers ? 'Resume Witnessing' : 'Start Witnessing';
+  const actionLabel = 'Witnessing Session';
   if(title)title.textContent=actionLabel;
   entry.setAttribute('aria-label','Continue VAL Witnessing Session');
   entry.innerHTML = [
@@ -28426,7 +28426,7 @@ async function openObserverBoard(options = {}){
         '<div class="observer-holding-space" role="status">',
           '<strong>Your Witnessing Session is paused.</strong>',
           '<span>' + escapeHtml(observerBoardState.witnessingNextStep || 'Continue Witnessing before the Board presents conclusions.') + '.</span>',
-          '<button type="button" data-workflow-action="valWitnessingResume">Continue Witnessing</button>',
+          '<button type="button" data-workflow-action="valWitnessingResume">Witnessing Session</button>',
         '</div>'
       ].join('')
     : '<div class="observer-holding-space" role="status">Holding space for Analytical and Relational Context</div>';
