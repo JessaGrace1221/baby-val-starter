@@ -1,129 +1,91 @@
-# Baby VAL Starter
+# Baby VAL
 
-Baby VAL is a small personal VAL starter app for workshops, experiments, and first deployments.
+Baby VAL is the governed foundation edition of VAL. It uses the current VAL
+intelligence, evidence, Witnessing, Connections, Board of Observers, text chat,
+Executive Inbox, Transcripts, and VAL Studio architecture while intentionally
+presenting a smaller product surface.
 
-It gives each person their own AI dashboard that can:
+## Visible Experience
 
-- answer questions in a private web dashboard
-- use an OpenAI API key
-- check setup health for Railway, Postgres, AI chat, Google, and Microsoft
-- customize the Baby VAL name, welcome message, accent color, and simple instructions from Dashboard Studio
-- run the guided **Teach VAL About You** onboarding flow
-- optionally use a Claude/Anthropic API key
-- connect Gmail through Google OAuth
-- save tasks, memory, transcripts, conversations, drafts, and OAuth tokens in Postgres
-- deploy on Railway from a GitHub repo
-- be customized later with Codex
+- Board of Observers
+- Executive Inbox
+- Transcripts
+- Text Co-Work with VAL
+- VAL Studio, including Environment sharing and importing
 
-Start here:
+Witnessing and Connections remain available through **VAL Setup** because they
+are the infrastructure that makes the visible experience truthful. Voice is not
+included in this edition.
 
-- [Baby VAL Setup SOP](./BABY_VAL_SOP.md)
-- [Full VAL User Guide](./VAL_USER_GUIDE.md)
+## Replacing an Existing Baby VAL
 
-## Quick Deploy
+Deploying this repository changes application code. It does not replace the
+Railway Postgres service or delete its data.
 
-1. Copy this repo into your own GitHub account.
-2. Deploy it on Railway from GitHub.
-3. Add a Railway Postgres database.
-4. Add the required Railway variables.
-5. Open the Railway URL and set your admin password.
-6. Connect Gmail from **Integration Status**.
+Keep the existing Railway service connected to its existing `DATABASE_URL`.
+Do not create a new database when updating the code. On startup, Baby VAL uses
+additive `create table if not exists` and `add column if not exists` migrations.
+Existing Witnessing answers, connections, transcripts, Board evidence, and VAL
+Studio Environments remain in Postgres.
+
+Destructive reset and deletion operations are never run during startup. They
+remain behind explicit authenticated actions.
 
 ## Required Railway Variables
 
-```text
-OPENAI_API_KEY=your OpenAI API key
-SESSION_SECRET=make up a long random phrase
-VAL_CLIENT_NAME=Your Name
-VAL_CLIENT_SLUG=your-name-val
-VAL_CLIENT_BRAND_NAME=Your Name VAL
-VAL_PUBLIC_BASE_URL=https://your-railway-url.up.railway.app
-ADMIN_EMAIL=your email address
-ADMIN_NAME=Your Name
-```
+- `DATABASE_URL`
+- `SESSION_SECRET`
+- `ENCRYPTION_KEY`
+- `ADMIN_NAME`
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
+- `VAL_CLIENT_NAME`
+- `VAL_CLIENT_SLUG`
+- `VAL_CLIENT_BRAND_NAME`
+- `VAL_PUBLIC_BASE_URL`
 
-Railway should provide this automatically after you attach Postgres:
+Baby VAL defaults to `VAL_EDITION=baby`. It is still helpful to set that
+variable explicitly in Railway.
 
-```text
-DATABASE_URL=your Railway Postgres URL
-```
+Users can securely add OpenAI and optional Anthropic keys inside **VAL Setup →
+Connections**. Keys are encrypted and are not committed to GitHub.
 
-Optional:
+## Common Connections
 
-```text
-OPENAI_KEY=legacy OpenAI API key fallback
-ANTHROPIC_KEY=your Claude API key
-VAL_CHAT_MODEL=gpt-5.5
-GOOGLE_CLIENT_ID=your Google OAuth client ID
-GOOGLE_CLIENT_SECRET=your Google OAuth client secret
-GOOGLE_REDIRECT_URI=https://your-railway-url.up.railway.app/auth/callback
-TEACH_VAL_WEBHOOK_URL=optional onboarding memory handoff URL
-```
+- Google OAuth for Gmail, Calendar, Drive, and Docs
+- Microsoft OAuth for Outlook and Microsoft Calendar
+- Krisp for transcripts
+- OpenAI for VAL reasoning
+- Anthropic / Claude as an optional approved model provider
 
-## New Baby VAL Dashboard Tools
+## Environment Sharing
 
-Open **Settings → API Keys & Connections** to see Setup Health. It checks whether Railway variables and Postgres are connected without revealing secret values.
+VAL Studio Environments live in each recipient's Postgres database, not in this
+GitHub repository.
 
-Open **Settings → Dashboard Studio** to edit simple Baby VAL settings directly from the dashboard. These save to the deployment database and affect the dashboard/chat experience without requiring a code change.
+Use **Share Environment** to download a portable
+`.val-environment.json` file. The share file includes the governed workflow
+contract but removes private evidence, identities, credentials, account
+mappings, destination IDs, approvals, receipts, and run history.
 
-Open **Teach VAL** from the dashboard Actions menu or the main dashboard card to run the guided onboarding flow:
+Use **Import Environment** to install a shared Environment. Imports always
+arrive as disconnected Drafts. The recipient must reconnect sources and
+destinations, confirm approval boundaries, and pass a historical test before
+making the Environment live.
 
-- Welcome
-- Voice Interview
-- Knowledge Cards for current projects, important people, lessons, preferences, frustrations, opportunities, and things to remember
-- Review extracted memory
-- Test Send or Send to VAL Memory
+## Local Verification
 
-Teach VAL onboarding memory is stored separately from contacts, tasks, emails, and transcripts.
-
-## Gmail Setup
-
-To connect Gmail, create a Google Cloud project, enable the Gmail API, create OAuth credentials, and add the Google variables to Railway.
-
-Use the step-by-step SOP:
-
-- [Baby VAL Setup SOP](./BABY_VAL_SOP.md#part-6-connect-gmail)
-
-Useful Google links:
-
-- Google Cloud Console: https://console.cloud.google.com/
-- Google API credentials: https://console.cloud.google.com/apis/credentials
-- Gmail API: https://console.cloud.google.com/apis/library/gmail.googleapis.com
-- Gmail API quickstart: https://developers.google.com/gmail/api/quickstart/nodejs
-
-## Optional Advanced Integrations
-
-This starter comes from a larger VAL codebase, so it includes optional hooks for CRM, lead research, Google Docs, Microsoft, and other advanced workflows.
-
-For a Baby VAL workshop, you can ignore these unless your facilitator specifically enables them:
-
-- GoHighLevel / LeadConnector
-- Microsoft OAuth
-- Outscraper
-- Apollo
-- RocketReach
-- lead intelligence workflows
-
-## Local Development
-
-Install dependencies:
-
-```sh
+```bash
 npm install
-```
-
-Run locally:
-
-```sh
+npm test
 npm start
 ```
 
-By default the app runs on:
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
-```text
-http://localhost:3000
-```
+`npm test` is the Baby VAL launch gate for its promised surfaces. The inherited
+full-product diagnostic suite remains available as `npm run test:full`; some
+adult-VAL presentation assertions intentionally do not apply to this edition.
 
-## Important Safety Note
-
-Do not commit API keys, OAuth secrets, passwords, or `.env` files to GitHub. Put secrets in Railway variables or in VAL's secure key panel.
+Never commit `.env`, API keys, OAuth tokens, database exports, or personal
+Witnessing documents.

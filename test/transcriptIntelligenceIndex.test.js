@@ -8,6 +8,16 @@ const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
 const ui=fs.readFileSync(path.join(root,'command-center.js'),'utf8');
 const dashboard=fs.readFileSync(path.join(root,'dashboard.html'),'utf8');
 
+function transcriptSourceHelpersForTest(){
+  const start=server.indexOf('function transcriptSourceItemText');
+  const end=server.indexOf('function transcriptOverviewItemText',start);
+  assert.ok(start>=0&&end>start,'source receipt helpers must be available');
+  return Function(server.slice(start,end)+'; return {transcriptSourceReceipt,dedupeTranscriptDrawerRecords};')();
+}
+function sourceReceiptForTest(transcript={}){
+  return transcriptSourceHelpersForTest().transcriptSourceReceipt(transcript);
+}
+
 test('creates transcript intelligence staging and evidence tables',()=>{
   for(const table of ['transcripts','transcript_participants','transcript_summaries','transcript_tasks','transcript_contact_updates','transcript_action_log','evidence_items','evidence_observations','val_evidence_links']){
     assert.match(server,new RegExp(`create table if not exists ${table} \\(`));
@@ -35,6 +45,23 @@ test('saves raw transcripts before legacy storage and stages tasks before promot
   assert.ok(stage>processStart&&promote>stage,'task must be staged before promotion');
 });
 
+test('transcript action item generation uses layered gates instead of snippet extraction',()=>{
+  assert.match(server,/Use this layered transcript process internally before producing JSON/);
+  assert.match(server,/function transcriptActionItemPassesGate/);
+  assert.match(server,/function normalizeTranscriptActionItems/);
+  assert.match(server,/function normalizeTranscriptDecisions/);
+  assert.match(server,/A transcript snippet is not an action item|Do not create tasks from jokes/);
+  const fallbackStart=server.indexOf('function fallbackTranscriptSummary');
+  const fallbackEnd=server.indexOf('async function processTranscriptPayload',fallbackStart);
+  const fallbackBody=server.slice(fallbackStart,fallbackEnd);
+  assert.match(fallbackBody,/extractFallbackTranscriptActionItems/);
+  assert.doesNotMatch(fallbackBody,/\\b\\(I\\|we\\)\\s\\+\\(will\\|need to\\|can\\|should\\)/);
+  const processStart=server.indexOf('async function processTranscriptPayload(payload)');
+  const processEnd=server.indexOf('function transcriptUiRecord',processStart);
+  const processBody=server.slice(processStart,processEnd);
+  assert.match(processBody,/parsed=normalizeTranscriptAnalysis\(parsed,transcript\)/);
+});
+
 test('requires evidence, confidence, review state, and action traceability',()=>{
   assert.match(server,/source_quote text not null/);
   assert.match(server,/match_confidence numeric not null/);
@@ -46,7 +73,12 @@ test('requires evidence, confidence, review state, and action traceability',()=>
   assert.match(server,/saveTranscriptEvidenceObservations/);
   assert.match(server,/runObservationEngine\(evidence,\{candidates,replace:true\}\)/);
   assert.match(server,/async function saveEvidenceLink/);
+  assert.match(server,/async function listEvidenceLinks/);
+  assert.match(server,/async function saveRelationshipProjectLink/);
+  assert.match(server,/async function saveCalendarProjectLink/);
   assert.match(server,/relationship:'extracted_task'/);
+  assert.match(server,/relationship:'linked_to_project'/);
+  assert.match(server,/relationship:'meeting_context_for_project'/);
   assert.match(server,/relationship:'created_task'/);
   assert.match(server,/relationship:'created_followup_draft'/);
   assert.match(server,/clearEvidenceLinksForTranscript/);
@@ -85,7 +117,7 @@ test('canonical transcript pipeline preserves conversations, identities, and dec
   const processStart=server.indexOf('async function processTranscriptPayload(payload)');
   const observations=server.indexOf('saveTranscriptEvidenceObservations({sourceId,title,transcript,parsed,participants,summary})',processStart);
   const canonical=server.indexOf('saveTranscriptCanonicalPipeline({sourceId,title,transcript,payload,parsed,participants,summary,observations})',processStart);
-  const drafts=server.indexOf('saveMeetingRecapDraft({transcriptId:sourceId,title,summary,participants,tasks:stagedTasks,transcriptText:transcript})',processStart);
+  const drafts=server.indexOf('const recapDraft=await saveMeetingRecapDraft(',processStart);
   assert.ok(observations>processStart&&canonical>observations,'canonical pipeline should run after evidence observations');
   assert.ok(drafts>canonical,'draft creation should happen after canonical conversation and decision capture');
 });
@@ -142,9 +174,9 @@ test('exposes inbox, detail, and review queue UI',()=>{
   assert.match(ui,/Transcript Intelligence/);
   assert.match(ui,/Review Queue/);
   assert.match(ui,/Intake Status/);
-  assert.match(ui,/Only real transcript records appear here/);
-  assert.match(ui,/No real transcripts are available yet/);
-  assert.match(ui,/Chat About This Transcript/);
+  assert.match(ui,/only uncertain items from real transcripts appear here/);
+  assert.match(ui,/No transcripts yet/);
+  assert.match(ui,/Co-Work on This Transcript/);
   assert.match(ui,/Processing details/);
   assert.match(ui,/Approve & Create/);
 });
@@ -230,16 +262,16 @@ test('transcript inbox supports direct upload and clearing broken transcript arc
 test('fallback summaries are not counted as hard processing failures',()=>{
   assert.match(server,/function isHardTranscriptProcessingFailure/);
   assert.match(server,/summary==='fallback_complete'&&processing==='complete'/);
-  assert.match(server,/failedProcessing:transcripts\.filter\(isHardTranscriptProcessingFailure\)\.length/);
+  assert.match(server,/failedProcessing:allMapped\.filter\(isHardTranscriptProcessingFailure\)\.length/);
 });
 
-test('transcript detail defaults to summary, transcript, and transcript-specific chat',()=>{
-  for(const label of ['Summary','Transcript','Chat About This Transcript','Processing details']){
+test('transcript detail uses a typed transcript Working Brief instead of freeform transcript chat',()=>{
+  for(const label of ['Summary','Transcript','Co-Work on This Transcript','Processing details']){
     assert.ok(ui.includes(label),`missing ${label}`);
   }
-  assert.match(ui,/api\/val\/transcripts\/'\+encodeURIComponent\(t\.id\)\+'\/chat/);
-  assert.match(server,/app\.post\('\/api\/val\/transcripts\/:transcriptId\/chat'/);
-  assert.match(server,/Do not say you need an email, document, Gmail, Drive, or external source/);
+  assert.match(server,/async function loadTranscriptForCowork/);
+  assert.match(server,/async function prepareCoworkTranscriptMeetingOverview/);
+  assert.doesNotMatch(server,/app\.post\('\/api\/val\/transcripts\/:transcriptId\/chat'/);
   assert.match(server,/function cleanTranscriptForUi/);
   assert.match(server,/function cleanTranscriptSummaryForUi/);
   assert.match(server,/function cleanTranscriptTitleForUi/);
@@ -247,15 +279,78 @@ test('transcript detail defaults to summary, transcript, and transcript-specific
   assert.match(server,/req\.query\.transcriptId/);
 });
 
-test('stores meeting recap templates and renders transcript recap drafts from them',()=>{
+test('stores meeting recap templates and creates source-grounded transcript overview drafts',()=>{
   assert.match(server,/create table if not exists val_templates \(/);
   assert.match(server,/DEFAULT_MEETING_RECAP_TEMPLATE/);
   assert.match(server,/app\.get\('\/api\/val\/templates\/:templateKey'/);
   assert.match(server,/app\.put\('\/api\/val\/templates\/:templateKey'/);
   assert.match(server,/saveMeetingRecapDraft/);
-  assert.match(server,/renderMeetingRecapTemplate/);
   assert.match(server,/draftType:'meeting_recap'/);
-  assert.match(server,/htmlBody:rendered\.htmlBody/);
+  assert.match(server,/function transcriptOverviewEmailBody/);
+  assert.match(server,/function transcriptSourceReceipt/);
+  assert.match(server,/return String\(overview\.body\|\|transcriptSourceReceipt\(transcript\)\.body\|\|''\)\.trim\(\)/);
+  assert.match(server,/source:'transcript_meeting_overview'/);
+  assert.match(server,/executionPath:'create_provider_draft_then_human_send'/);
+});
+
+test('preserves every Krisp action item and key point word for word in the source receipt',()=>{
+  const exactKrispText=[
+    'Action Items',
+    'Anthony to send the website link to Jessa and Aric.',
+    'Speaker 2 to set up the CRM for the Forever Freedom project.',
+    '',
+    'Key Points',
+    'Purpose of the call: follow up on the Forever Freedom project.',
+    'CRM ownership was discussed; Anthony indicated he had held off assigning it.'
+  ].join('\n');
+  const receipt=sourceReceiptForTest({rawTranscript:exactKrispText});
+  assert.equal(receipt.body,exactKrispText);
+  assert.deepEqual(receipt.actionItems,[
+    'Anthony to send the website link to Jessa and Aric.',
+    'Speaker 2 to set up the CRM for the Forever Freedom project.'
+  ]);
+  assert.deepEqual(receipt.keyPoints,[
+    'Purpose of the call: follow up on the Forever Freedom project.',
+    'CRM ownership was discussed; Anthony indicated he had held off assigning it.'
+  ]);
+});
+
+test('shows one trustworthy Krisp receipt when the same meeting is ingested twice',()=>{
+  const {dedupeTranscriptDrawerRecords}=transcriptSourceHelpersForTest();
+  const rows=dedupeTranscriptDrawerRecords([
+    {
+      id:'full-transcript-copy',
+      source:'krisp',
+      title:'Monday Touch Point w/Jessa · Jul 13, 2026',
+      createdAt:'2026-07-13T15:35:16.000Z',
+      sourceReceipt:{body:'Action Items\\n'+Array(470).fill('Speaker line from the full transcript.').join('\\n'),actionItems:Array(470).fill('Speaker line from the full transcript.'),keyPoints:[]}
+    },
+    {
+      id:'krisp-receipt',
+      source:'krisp',
+      title:'Monday Touch Point w/Jessa · Jul 13, 2026',
+      createdAt:'2026-07-13T15:34:49.000Z',
+      sourceReceipt:{body:'Action Items\\n- [ ] Send the follow-up.\\n\\nKey Points\\n- The follow-up is ready.',actionItems:['- [ ] Send the follow-up.'],keyPoints:['- The follow-up is ready.']}
+    }
+  ]);
+  assert.deepEqual(rows.map(row=>row.id),['krisp-receipt']);
+});
+
+test('creates transcript tasks from the exact Krisp action line',()=>{
+  assert.match(server,/async function createCoworkTranscriptActionItem/);
+  assert.match(server,/taskTitle:exactActionItem/);
+  assert.match(server,/sourceQuote:exactActionItem/);
+  assert.match(server,/preserveSourceTitle:true/);
+  assert.doesNotMatch(server,/app\.post\('\/api\/val\/transcripts\/:transcriptId\/actions'/);
+});
+
+test('Home task projection uses the canonical transcript owner and consolidates repeated Action Items',()=>{
+  assert.match(server,/async function canonicalTranscriptTaskProjection/);
+  assert.match(server,/\[tenantId\(\),VAL_USER_ID,bounded\]/);
+  assert.match(server,/function executiveTranscriptTaskTitle/);
+  assert.match(server,/function mergeTranscriptTaskProjection/);
+  assert.match(server,/related_task_ids/);
+  assert.match(server,/tt\.task_id=any\(\$1::text\[\]\)/);
 });
 
 test('exposes drafts and settings templates navigation',()=>{
