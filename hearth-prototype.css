@@ -20278,15 +20278,21 @@ body.baby-val-edition .cowork-notebook .val-presence-mark{
   height:102px;
 }
 body.baby-val-edition .teach-pen{
-  min-height:48px;
-  border-radius:7px;
-  border-color:rgba(239,185,173,.38);
-  background:
-    linear-gradient(110deg,rgba(125,141,111,.58),rgba(241,234,222,.2) 48%,rgba(190,126,137,.58)),
-    rgba(26,16,13,.28);
-  box-shadow:0 18px 42px rgba(9,5,4,.2),0 0 32px rgba(239,185,173,.13);
-  font-size:.76rem;
-  letter-spacing:.04em;
+  font-size:inherit;
+  letter-spacing:inherit;
+}
+body.baby-val-edition .retrieval-system.open:not([data-active-drawer]) .studio-drawer-link{
+  --orb-sage:rgba(125,141,111,.24);
+  --orb-rose:rgba(217,138,150,.24);
+  --orb-rim-sage:rgba(125,141,111,.2);
+  --orb-rim-rose:rgba(217,138,150,.2);
+  --node-x:0px;
+  --node-y:-195px;
+  width:116px;
+  height:116px;
+  min-height:0;
+  border-radius:999px;
+  animation-delay:.28s;
 }
 body.baby-val-edition .retrieval-system.open:not([data-active-drawer]) .correspondence-drawer-link{
   --node-x:-205px;
@@ -20309,10 +20315,6 @@ body.baby-val-edition .drawer-pull-label::after{
   body.baby-val-edition .desk-companions{
     width:calc(100vw - 36px);
     margin-top:22px;
-  }
-  body.baby-val-edition .teach-pen{
-    width:min(360px,100%);
-    justify-self:center;
   }
   body.baby-val-edition .retrieval-system.open:not([data-active-drawer]) .drawer-link{
     position:relative;

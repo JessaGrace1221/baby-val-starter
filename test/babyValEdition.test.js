@@ -26,6 +26,22 @@ test('Baby VAL keeps the approved visible foundation surfaces', () => {
   assert.match(html, /data-val-drawer-connections/);
 });
 
+test('VAL Studio is the first and top Executive Function, not a separate home-side button', () => {
+  const drawerGrid = html.match(/<div class="drawer-grid">([\s\S]*?)<div class="workspace-packet-receipt/);
+  assert.ok(drawerGrid, 'Executive Functions drawer grid must exist');
+  assert.match(drawerGrid[1], /^\s*<button[^>]*class="drawer-link studio-drawer-link teach-pen"/);
+  assert.match(drawerGrid[1], /<span>VAL Studio<\/span>/);
+  assert.match(client, /if\(studioLabel\) studioLabel\.textContent = 'VAL Studio';/);
+  assert.doesNotMatch(
+    html.match(/<aside class="desk-companions"[\s\S]*?<\/aside>/)?.[0] || '',
+    /teach-pen|VAL Studio/
+  );
+  assert.match(
+    css,
+    /body\.baby-val-edition \.retrieval-system\.open:not\(\[data-active-drawer\]\) \.studio-drawer-link\{[\s\S]*?--node-x:0px;[\s\S]*?--node-y:-195px;/
+  );
+});
+
 test('Witnessing has one permanent prominent navigation label', () => {
   assert.match(css, /body\.baby-val-edition \.baby-witnessing-cta/);
   assert.doesNotMatch(html, />Continue Witnessing<\/button>/);

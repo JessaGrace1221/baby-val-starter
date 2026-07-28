@@ -18250,7 +18250,7 @@ function applyClientFeatureLocks(){
   if(clientFeatureLocks.babyValEdition){
     document.title = 'Baby VAL';
     const studioLabel = teachPen?.querySelector('span');
-    if(studioLabel) studioLabel.textContent = 'Open VAL Studio';
+    if(studioLabel) studioLabel.textContent = 'VAL Studio';
     const valLabel = valDrawerLink?.querySelector('span');
     const valDetailCopy = valDrawerLink?.querySelector('small');
     if(valLabel) valLabel.textContent = 'VAL Setup';
