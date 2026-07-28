@@ -5,6 +5,10 @@ intelligence, evidence, Witnessing, Connections, Board of Observers, text chat,
 Executive Inbox, Transcripts, and VAL Studio architecture while intentionally
 presenting a smaller product surface.
 
+**Installing or replacing an existing Baby VAL?** Follow
+[START_HERE.md](./START_HERE.md). It is written for a nontechnical user and
+requires no Terminal or coding.
+
 ## Visible Experience
 
 - Board of Observers
