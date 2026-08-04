@@ -170,6 +170,21 @@ function clientFeatureLocks(){
     voiceEnabled:!BABY_VAL_EDITION
   };
 }
+function systemUpdateStatus(){
+  const currentVersion = String(process.env.VAL_DASHBOARD_VERSION || process.env.RAILWAY_GIT_COMMIT_SHA || '').trim();
+  const baselineVersion = String(process.env.VAL_SYSTEM_BASELINE_VERSION || currentVersion).trim();
+  const updateUrl = String(process.env.VAL_SYSTEM_UPDATE_URL || '').trim();
+  const releaseLabel = String(process.env.VAL_SYSTEM_RELEASE_LABEL || '').trim();
+  const available = Boolean(baselineVersion && currentVersion && baselineVersion !== currentVersion);
+  return {
+    available,
+    currentVersion,
+    baselineVersion,
+    releaseLabel,
+    updateUrl,
+    checkedAt: new Date().toISOString()
+  };
+}
 function requestBaseUrl(req=null){
   if(CLIENT_CONFIG.publicBaseUrl) return CLIENT_CONFIG.publicBaseUrl;
   const host=String(req?.get?.('host')||req?.headers?.host||'').trim();
@@ -8319,8 +8334,12 @@ app.get('/api/public-config',(req,res)=>{
     clientName: CLIENT_CONFIG.clientName,
     brandName: CLIENT_CONFIG.brandName,
     voiceWidgetId: process.env.GHL_VOICE_WIDGET_ID || '6a6253197742c156ecacd8ca',
-    featureFlags: clientFeatureLocks()
+    featureFlags: clientFeatureLocks(),
+    systemUpdate: systemUpdateStatus()
   });
+});
+app.get('/api/system-update-status',(req,res)=>{
+  res.json({ok:true,...systemUpdateStatus()});
 });
 app.use((req,res,next)=>{
   if(!BABY_VAL_EDITION)return next();
@@ -8337,7 +8356,7 @@ app.get('/api/config',async(req,res)=>{
   const studioOverride=await getTenantDashboardStudioOverride().catch(()=>null);
   const babyStudio=await getBabyStudioSettings().catch(()=>null);
   const configuredName=babyStudio?.babyValName||CLIENT_CONFIG.brandName;
-  res.json({...CLIENT_CONFIG,brandName:configuredName,demoMode:DEMO_MODE,signupUrl:VAL_SIGNUP_URL,ghlAccounts:configuredGhlAccounts().map(a=>({slug:a.slug,label:a.label,locationId:a.locationId,calendarCount:a.calendarIds.length})),microsoftConfigured:!!(MICROSOFT_CLIENT_ID&&MICROSOFT_CLIENT_SECRET&&MICROSOFT_REDIRECT_URI),googleOAuth:googleOAuthConfigSnapshot(),featureFlags:{dashboard_studio_beta:await dashboardStudioFeatureEnabled(req).catch(()=>false),...clientFeatureLocks()},dashboardStudioOverrides:studioOverride?.config||{},babyValStudioSettings:babyStudio||null,dashboardStudioDeployment:{activeDeploymentId:studioOverride?.activeDeploymentId||'',updatedAt:studioOverride?.updatedAt||''}});
+  res.json({...CLIENT_CONFIG,brandName:configuredName,demoMode:DEMO_MODE,signupUrl:VAL_SIGNUP_URL,ghlAccounts:configuredGhlAccounts().map(a=>({slug:a.slug,label:a.label,locationId:a.locationId,calendarCount:a.calendarIds.length})),microsoftConfigured:!!(MICROSOFT_CLIENT_ID&&MICROSOFT_CLIENT_SECRET&&MICROSOFT_REDIRECT_URI),googleOAuth:googleOAuthConfigSnapshot(),featureFlags:{dashboard_studio_beta:await dashboardStudioFeatureEnabled(req).catch(()=>false),...clientFeatureLocks()},systemUpdate:systemUpdateStatus(),dashboardStudioOverrides:studioOverride?.config||{},babyValStudioSettings:babyStudio||null,dashboardStudioDeployment:{activeDeploymentId:studioOverride?.activeDeploymentId||'',updatedAt:studioOverride?.updatedAt||''}});
 });
 app.get('/api/config/status',(req,res)=>res.json(statusPayload()));
 app.get('/api/setup-health',async(req,res)=>{
