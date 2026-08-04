@@ -44,6 +44,7 @@ function environmentBlockCatalog(){
     ],
     actions:[
       {blockType:'external_action',blockId:'send_email',label:'Send Email',accepts:['approved_action_v1'],policy:'recipient_and_action_bounded'},
+      {blockType:'external_action',blockId:'send_sms',label:'Send me a Text Message',accepts:['approved_action_v1'],policy:'phone_provider_required'},
       {blockType:'external_action',blockId:'append_google_doc',label:'Append to Google Doc',accepts:['approved_action_v1'],policy:'document_id_bounded'}
     ]
   };
@@ -55,6 +56,11 @@ function normalizeEnvironmentSpec(input={}){
   const trigger=input.trigger&&typeof input.trigger==='object'?input.trigger:{};
   const connections=input.connections&&typeof input.connections==='object'?input.connections:{};
   const approvals=input.approvals&&typeof input.approvals==='object'?input.approvals:{};
+  const actions=input.actions&&typeof input.actions==='object'?input.actions:{};
+  const sendEmail=actions.sendEmail!==false&&actions.send_email!==false;
+  const sendSms=Boolean(actions.sendSms||actions.send_sms||safeArray(actions.executionOrder||actions.execution_order).includes('send_sms'));
+  const appendGoogleDoc=Boolean(actions.appendGoogleDoc||actions.append_google_doc||connections.googleDocumentId||connections.google_document_id);
+  const actionScope=[sendEmail?'send_email':'',sendSms?'send_sms':'',appendGoogleDoc?'append_google_doc':''].filter(Boolean);
   return {
     contractVersion:1,
     name:compactText(input.name||'Untitled Environment',120),
@@ -81,15 +87,17 @@ function normalizeEnvironmentSpec(input={}){
       googleDocumentId:compactText(connections.googleDocumentId||connections.google_document_id,240)
     },
     actions:{
-      sendEmail:true,
-      appendGoogleDoc:true,
-      executionOrder:['send_email','append_google_doc']
+      sendEmail,
+      sendSms,
+      actionId:compactText(actions.actionId||actions.action_id,80),
+      appendGoogleDoc,
+      executionOrder:actionScope
     },
     approvals:{
       sendEmail:approvals.sendEmail==='preauthorized'?'preauthorized':'required',
       appendGoogleDoc:approvals.appendGoogleDoc==='preauthorized'?'preauthorized':'required',
       recipientScope:'meeting_attendees_except_executive',
-      actionScope:['send_email','append_google_doc']
+      actionScope
     },
     retryPolicy:{
       idempotent:true,
@@ -521,6 +529,18 @@ function createValEnvironmentsService({
     const saved=await saveEnvironment({...environment,status:'paused',updatedAt:new Date().toISOString()});
     return {ok:true,environment:await hydrateEnvironment(saved)};
   }
+  async function deleteEnvironment(id){
+    const environment=await getEnvironment(id);
+    if(!environment)throw new Error('Environment not found.');
+    const saved=await saveEnvironment({
+      ...environment,
+      status:'deleted',
+      activeVersionId:null,
+      draftVersionId:null,
+      updatedAt:new Date().toISOString()
+    });
+    return {ok:true,deleted:true,environment:await hydrateEnvironment(saved),no_external_action:true};
+  }
   async function runHistoricalTest(id,{transcriptId}={}){
     const environment=await getEnvironment(id);
     if(!environment)throw new Error('Environment not found.');
@@ -895,6 +915,7 @@ function createValEnvironmentsService({
     importTemplate,
     activate,
     pause,
+    delete:deleteEnvironment,
     runHistoricalTest,
     listRuns,
     latestSuccessfulTest,

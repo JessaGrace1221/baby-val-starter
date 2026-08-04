@@ -28584,23 +28584,116 @@ const valStudioObserverDefaults = ['commitment','relationship','delight','synchr
 function valStudioDefaultSpec(){
   return {
     name:'New executive Environment',
-    outcome:'Turn a recurring source into a clear, governed result.',
-    purpose:'Remove repeated executive work without hiding judgment or taking unapproved action.',
-    trigger:{type:'krisp_transcript_received',eventTitlePattern:'',eventTitleConfirmed:false,mode:'immediate'},
+    outcome:'After every transcript is received, email Action Items and Key Points to each attendee.',
+    purpose:'Gently introduce VAL to meeting attendees while also getting them all relevant information.',
+    trigger:{type:'krisp_transcript_received',eventTitlePattern:'',eventTitleConfirmed:false,mode:'all_transcripts'},
     observerIds:[...valStudioObserverDefaults],
     connections:{emailProvider:'gmail',googleDocumentId:''},
+    actions:{sendEmail:true,appendGoogleDoc:false,executionOrder:['send_email']},
     approvals:{sendEmail:'required',appendGoogleDoc:'required'}
   };
+}
+function valStudioBlankSpec(){
+  return {
+    name:'New Environment',
+    outcome:'',
+    purpose:'',
+    trigger:{type:'manual_or_connected_event',eventTitlePattern:'',eventTitleConfirmed:false,mode:'draft'},
+    observerIds:[...valStudioObserverDefaults],
+    connections:{emailProvider:'',googleDocumentId:''},
+    actions:{sendEmail:false,appendGoogleDoc:false,executionOrder:[]},
+    approvals:{sendEmail:'required',appendGoogleDoc:'required'}
+  };
+}
+function valStudioSpecFromStarter(template='blank',workflowText=''){
+  const clean=String(workflowText||'').trim();
+  if(template==='transcript_attendee_email'){
+    const spec=valStudioDefaultSpec();
+    if(clean)spec.outcome=clean;
+    spec.name=/post meeting|meeting notes/i.test(clean)?'Post Meeting Notes':'Transcript Attendee Email';
+    return spec;
+  }
+  const spec=valStudioBlankSpec();
+  spec.outcome=clean;
+  if(/salesforce|hubspot|crm/i.test(clean)){
+    spec.name='CRM Signal Alert';
+    spec.trigger.type=/hubspot/i.test(clean)?'hubspot_event':'salesforce_event';
+  }else if(/calendar|meeting/i.test(clean)){
+    spec.name='Meeting Follow-up';
+    spec.trigger.type='calendar_or_transcript_event';
+  }
+  return spec;
+}
+function valStudioConnectorCatalog(){
+  return [
+    {group:'Inside VAL',source:'val',label:'VAL',events:['Transcript received','Action item detected','VAL enacted an Action Item','Key point detected','Executive Inbox item created','Relationship updated','Task overdue','Environment completed','Environment needs clarification','Human approved or rejected work']},
+    {group:'CRM',source:'hubspot',label:'HubSpot',events:['Deal created','Deal stage changed','Contact updated','Company updated','Note added','Task completed','Form submitted']},
+    {group:'CRM',source:'salesforce',label:'Salesforce',events:['Lead created','Opportunity stage changed','Account updated','Contact updated','Case created','Task completed','Activity logged']},
+    {group:'Email and Calendar',source:'gmail',label:'Gmail',events:['Email received from person','Email received from domain','Thread updated','Attachment received','Label added']},
+    {group:'Email and Calendar',source:'outlook',label:'Outlook',events:['Email received from person','Email received from domain','Thread updated','Attachment received','Category added']},
+    {group:'Email and Calendar',source:'google_calendar',label:'Google Calendar',events:['Event created','Event updated','Event ending','Attendee added','RSVP changed']},
+    {group:'Documents and Data',source:'google_docs',label:'Google Docs',events:['Document created','Document updated','Comment added','Shared document changed']},
+    {group:'Documents and Data',source:'google_sheets',label:'Google Sheets',events:['Row added','Row updated','Cell changed','Sheet created']},
+    {group:'Documents and Data',source:'notion',label:'Notion',events:['Page created','Page updated','Database item created','Status changed','Comment added']},
+    {group:'Revenue',source:'stripe',label:'Stripe',events:['Payment succeeded','Payment failed','Subscription created','Subscription canceled','Invoice paid','Dispute created']},
+    {group:'Communication',source:'slack',label:'Slack',events:['Message posted','Mention received','File shared','Reaction added']},
+    {group:'Generic',source:'form_webhook',label:'Form or Webhook',events:['Form submitted','Webhook received','External event received']},
+    {group:'Generic',source:'schedule',label:'Schedule',events:['At a specific time','Every day','Every week','Every month']},
+    {group:'Generic',source:'manual',label:'Manual',events:['User runs Environment']}
+  ];
+}
+function valStudioActionCatalog(){
+  return [
+    {id:'notify_user',label:'Notify me inside VAL'},
+    {id:'send_sms',label:'Send me a Text Message'},
+    {id:'draft_email',label:'Draft an email'},
+    {id:'send_email',label:'Send an email'},
+    {id:'create_task',label:'Create a task'},
+    {id:'add_executive_inbox',label:'Add to Executive Inbox'},
+    {id:'ask_clarification',label:'Ask for clarification'},
+    {id:'update_crm',label:'Update CRM'},
+    {id:'append_google_doc',label:'Append Google Doc'},
+    {id:'update_sheet',label:'Update spreadsheet'},
+    {id:'create_notion_page',label:'Create or update Notion page'},
+    {id:'trigger_environment',label:'Trigger another Environment'},
+    {id:'pause_environment',label:'Pause and request approval'}
+  ];
+}
+function valStudioStarterSpecFromControls(root){
+  const source=root.querySelector('[name="starterTriggerSource"]')?.value||'val';
+  const eventName=root.querySelector('[name="starterTriggerEvent"]')?.value||'';
+  const action=root.querySelector('[name="starterAction"]')?.value||'notify_user';
+  const workflow=String(root.querySelector('[name="starterWorkflow"]')?.value||'').trim();
+  if(source==='val'&&/transcript received/i.test(eventName)&&action==='send_email'){
+    return valStudioSpecFromStarter('transcript_attendee_email',workflow);
+  }
+  const spec=valStudioSpecFromStarter('blank',workflow);
+  spec.name=workflow?workflow.split(/[.\n]/)[0].slice(0,80)||'New Environment':'New Environment';
+  spec.trigger.type=source+'_event';
+  spec.trigger.eventTitlePattern=eventName;
+  spec.trigger.mode='draft';
+  spec.actions={
+    sendEmail:action==='send_email'||action==='draft_email',
+    appendGoogleDoc:action==='append_google_doc',
+    sendSms:action==='send_sms',
+    actionId:action,
+    executionOrder:[action].filter(Boolean)
+  };
+  spec.connections.emailProvider=spec.actions.sendEmail?'gmail':'';
+  return spec;
 }
 let valStudioState = {
   stage:0,
   mode:'library',
   notice:'',
+  starterText:'',
+  deleteConfirmId:'',
   environmentId:'',
   environment:null,
   versionNumber:0,
   activeVersionNumber:0,
   environments:[],
+  communications:null,
   transcripts:[],
   lastTest:null,
   spec:valStudioDefaultSpec()
@@ -28632,19 +28725,26 @@ function valStudioCurrentSpec(){
     outcome:has('environmentOutcome')?(value('environmentOutcome')||valStudioState.spec.outcome):valStudioState.spec.outcome,
     purpose:has('environmentPurpose')?(value('environmentPurpose')||valStudioState.spec.purpose):valStudioState.spec.purpose,
     trigger:{
-      type:'krisp_transcript_received',
-      eventTitlePattern:has('eventTitlePattern')?value('eventTitlePattern'):valStudioState.spec.trigger.eventTitlePattern,
-      eventTitleConfirmed:has('eventTitleConfirmed')?checked('eventTitleConfirmed'):valStudioState.spec.trigger.eventTitleConfirmed,
-      mode:'immediate'
+      type:valStudioState.spec.trigger?.type||'manual_or_connected_event',
+      eventTitlePattern:has('eventTitlePattern')?value('eventTitlePattern'):(valStudioState.spec.trigger?.eventTitlePattern||''),
+      eventTitleConfirmed:has('eventTitleConfirmed')?checked('eventTitleConfirmed'):Boolean(valStudioState.spec.trigger?.eventTitleConfirmed),
+      mode:valStudioState.spec.trigger?.mode||'draft'
     },
     observerIds:observerFields.length?observerFields.filter(input=>input.checked).map(input=>input.value):valStudioState.spec.observerIds,
     connections:{
-      emailProvider:has('emailProvider')?(value('emailProvider')||'gmail'):valStudioState.spec.connections.emailProvider,
-      googleDocumentId:has('googleDocumentId')?value('googleDocumentId'):valStudioState.spec.connections.googleDocumentId
+      emailProvider:has('emailProvider')?(value('emailProvider')||'gmail'):valStudioState.spec.connections?.emailProvider,
+      googleDocumentId:has('googleDocumentId')?value('googleDocumentId'):valStudioState.spec.connections?.googleDocumentId
+    },
+    actions:{
+      sendEmail:has('emailProvider')?true:Boolean(valStudioState.spec.actions?.sendEmail),
+      appendGoogleDoc:has('docPreauthorized')?Boolean(valStudioState.spec.actions?.appendGoogleDoc):Boolean(valStudioState.spec.actions?.appendGoogleDoc),
+      sendSms:Boolean(valStudioState.spec.actions?.sendSms),
+      actionId:valStudioState.spec.actions?.actionId||'',
+      executionOrder:safeArray(valStudioState.spec.actions?.executionOrder).length?valStudioState.spec.actions.executionOrder:[]
     },
     approvals:{
-      sendEmail:has('emailPreauthorized')?(checked('emailPreauthorized')?'preauthorized':'required'):valStudioState.spec.approvals.sendEmail,
-      appendGoogleDoc:has('docPreauthorized')?(checked('docPreauthorized')?'preauthorized':'required'):valStudioState.spec.approvals.appendGoogleDoc
+      sendEmail:has('emailPreauthorized')?(checked('emailPreauthorized')?'preauthorized':'required'):valStudioState.spec.approvals?.sendEmail,
+      appendGoogleDoc:has('docPreauthorized')?(checked('docPreauthorized')?'preauthorized':'required'):valStudioState.spec.approvals?.appendGoogleDoc
     }
   };
 }
@@ -28681,14 +28781,34 @@ function valStudioRecurringTitleSuggestion(value=''){
     .trim();
 }
 
+function valStudioTriggerCopy(spec={}){
+  const type=String(spec.trigger?.type||'manual_or_connected_event');
+  if(type==='krisp_transcript_received'){
+    return {
+      source:'Krisp transcript',
+      detail:spec.trigger?.mode==='all_transcripts'?'Every transcript':(spec.trigger?.eventTitlePattern||'Recurring event to confirm')
+    };
+  }
+  if(type==='salesforce_event')return {source:'Salesforce event',detail:spec.trigger?.eventTitlePattern||'Connector setup required'};
+  if(type==='hubspot_event')return {source:'HubSpot event',detail:spec.trigger?.eventTitlePattern||'Connector setup required'};
+  if(type==='calendar_or_transcript_event')return {source:'Meeting event',detail:spec.trigger?.eventTitlePattern||'Source setup required'};
+  return {source:'Source to connect',detail:spec.trigger?.eventTitlePattern||'Draft until connected'};
+}
+
 function valStudioVisualMap(){
   const names=valStudioSelectedObserverNames();
+  const trigger=valStudioTriggerCopy(valStudioState.spec);
+  const produces=[
+    valStudioState.spec.actions?.sendEmail?'Email':'',
+    valStudioState.spec.actions?.sendSms?'Text Message':'',
+    valStudioState.spec.actions?.appendGoogleDoc?'Google Doc':''
+  ].filter(Boolean);
   return [
     '<div class="val-studio-map" aria-label="Environment map">',
       '<div class="val-studio-source-node">',
         '<span>Trigger</span>',
-        '<strong>Krisp transcript</strong>',
-        '<small>' + escapeHtml(valStudioState.spec.trigger.eventTitlePattern||'Recurring event to confirm') + '</small>',
+        '<strong>' + escapeHtml(trigger.source) + '</strong>',
+        '<small>' + escapeHtml(trigger.detail) + '</small>',
       '</div>',
       '<div class="val-studio-flow-line source-flow" aria-hidden="true"></div>',
       '<div class="val-studio-round-table">',
@@ -28708,8 +28828,7 @@ function valStudioVisualMap(){
       '</div>',
       '<div class="val-studio-action-rail">',
         '<span>Produces</span>',
-        '<strong>Email</strong>',
-        '<strong>Google Doc</strong>',
+        produces.map(label=>'<strong>'+escapeHtml(label)+'</strong>').join('')||'<strong>Draft result</strong>',
       '</div>',
     '</div>'
   ].join('');
@@ -28906,13 +29025,25 @@ function valStudioLibraryView(){
             const spec=version.specJson||{};
             const state=valStudioEnvironmentStatus(environment);
             const observers=safeArray(spec.observerIds);
+            const confirmDelete=valStudioState.deleteConfirmId===environment.id;
             return [
-              '<button type="button" class="val-studio-environment-row" data-val-studio-open="' + escapeHtml(environment.id||'') + '">',
+              '<article class="val-studio-environment-row">',
                 '<span class="val-studio-environment-state ' + escapeHtml(state.tone) + '"><i aria-hidden="true"></i>' + escapeHtml(state.label) + '</span>',
                 '<span class="val-studio-environment-copy"><strong>' + escapeHtml(environment.name||spec.name||'Untitled Environment') + '</strong><small>' + escapeHtml(spec.outcome||'Outcome not defined yet.') + '</small></span>',
                 '<span class="val-studio-environment-meta"><strong>' + escapeHtml(spec.trigger?.eventTitlePattern||'Trigger not confirmed') + '</strong><small>' + escapeHtml(String(observers.length)) + ' Observer' + (observers.length===1?'':'s') + '</small></span>',
-                '<span class="val-studio-environment-arrow" aria-hidden="true">→</span>',
-              '</button>'
+                '<span class="val-studio-environment-actions">',
+                  '<button type="button" data-val-studio-open="' + escapeHtml(environment.id||'') + '">Open</button>',
+                  '<button type="button" class="danger" data-val-studio-delete="' + escapeHtml(environment.id||'') + '">Delete</button>',
+                '</span>',
+                confirmDelete?[
+                  '<div class="val-studio-delete-confirm">',
+                    '<strong>Delete this Environment?</strong>',
+                    '<span>It will stop running and disappear from Studio.</span>',
+                    '<button type="button" class="danger" data-val-studio-delete-confirm="' + escapeHtml(environment.id||'') + '">Delete</button>',
+                    '<button type="button" data-val-studio-delete-cancel>Cancel</button>',
+                  '</div>'
+                ].join(''):'',
+              '</article>'
             ].join('');
           }).join(''),
         '</div>'
@@ -28925,6 +29056,45 @@ function valStudioLibraryView(){
         '</div>'
       ].join(''),
       '<footer class="val-studio-library-footer"><span>Every Environment is tested against real history before it can go live.</span><strong>The executive remains the governing authority.</strong></footer>',
+    '</div>'
+  ].join('');
+}
+
+function valStudioStarterView(){
+  const defaultText=valStudioState.starterText||'';
+  const connectors=valStudioConnectorCatalog();
+  const actions=valStudioActionCatalog();
+  const grouped=connectors.reduce((groups,item)=>{
+    if(!groups[item.group])groups[item.group]=[];
+    groups[item.group].push(item);
+    return groups;
+  },{});
+  const sourceOptions=Object.entries(grouped).map(([group,items])=>[
+    '<optgroup label="' + escapeHtml(group) + '">',
+      items.map(item=>'<option value="' + escapeHtml(item.source) + '">' + escapeHtml(item.label) + '</option>').join(''),
+    '</optgroup>'
+  ].join('')).join('');
+  const initialEvents=connectors[0]?.events||[];
+  return [
+    '<div class="val-studio val-studio-starter" data-val-studio>',
+      '<header class="val-studio-header">',
+        '<div><button type="button" class="val-studio-library-link" data-val-studio-library>← Environments</button><strong>New Environment</strong></div>',
+      '</header>',
+      valStudioNotice(),
+      '<section class="val-studio-starter-panel">',
+        '<div class="val-studio-starter-heading">',
+          '<span>Start</span>',
+          '<h3>Choose the trigger and the action.</h3>',
+        '</div>',
+        '<div class="val-studio-trigger-grid">',
+          '<label><span>Trigger source</span><select name="starterTriggerSource" data-val-studio-trigger-source>' + sourceOptions + '</select></label>',
+          '<label><span>Trigger event</span><select name="starterTriggerEvent" data-val-studio-trigger-event>' + initialEvents.map(event=>'<option value="' + escapeHtml(event) + '">' + escapeHtml(event) + '</option>').join('') + '</select></label>',
+          '<label><span>Action</span><select name="starterAction">' + actions.map(action=>'<option value="' + escapeHtml(action.id) + '">' + escapeHtml(action.label) + '</option>').join('') + '</select></label>',
+        '</div>',
+        '<label><span>Describe the workflow</span><textarea name="starterWorkflow" placeholder="Example: When a HubSpot deal moves to closed won, text me and create the onboarding follow-up.">' + escapeHtml(defaultText) + '</textarea></label>',
+        '<button type="button" class="val-studio-create-from-trigger" data-val-studio-start-template="trigger_action">Create Environment</button>',
+      '</section>',
+      '<footer class="val-studio-library-footer"><span>Drafts can be shaped before every connector is live.</span><strong>Activation still requires a real historical test.</strong></footer>',
     '</div>'
   ].join('');
 }
@@ -28977,6 +29147,13 @@ function renderValStudio(){
     scraperPreviewList.hidden=false;
     scraperPreviewList.classList.add('val-studio-surface');
     scraperPreviewList.innerHTML=valStudioLibraryView();
+    wireValStudio();
+    return;
+  }
+  if(valStudioState.mode==='starter'){
+    scraperPreviewList.hidden=false;
+    scraperPreviewList.classList.add('val-studio-surface');
+    scraperPreviewList.innerHTML=valStudioStarterView();
     wireValStudio();
     return;
   }
@@ -29093,6 +29270,23 @@ async function importValStudioEnvironment(file){
   renderValStudio();
 }
 
+async function deleteValStudioEnvironment(id){
+  if(!id)throw new Error('Choose an Environment to delete.');
+  const result=await valStudioRequest(`/api/val/environments/${encodeURIComponent(id)}`,'DELETE');
+  valStudioState.environments=safeArray(valStudioState.environments).filter(item=>item.id!==id);
+  if(valStudioState.environmentId===id){
+    valStudioState.environmentId='';
+    valStudioState.environment=null;
+    valStudioState.spec=valStudioBlankSpec();
+    valStudioState.lastTest=null;
+    valStudioState.communications=null;
+  }
+  valStudioState.deleteConfirmId='';
+  valStudioState.mode='library';
+  valStudioState.notice=result.deleted?'Environment deleted. It will no longer run or appear in Studio.':'Environment removed from Studio.';
+  renderValStudio();
+}
+
 function wireValStudio(){
   const root=scraperPreviewList.querySelector('[data-val-studio]');
   if(!root)return;
@@ -29104,6 +29298,23 @@ function wireValStudio(){
   });
   root.querySelectorAll('[data-val-studio-new]').forEach(button=>button.addEventListener('click',()=>{
     valStudioState.notice='';
+    valStudioState.mode='starter';
+    valStudioState.stage=0;
+    valStudioState.environmentId='';
+    valStudioState.environment=null;
+    valStudioState.versionNumber=0;
+    valStudioState.activeVersionNumber=0;
+    valStudioState.lastTest=null;
+    valStudioState.communications=null;
+    valStudioState.spec=valStudioBlankSpec();
+    renderValStudio();
+  }));
+  root.querySelectorAll('[data-val-studio-start-template]').forEach(button=>button.addEventListener('click',()=>{
+    valStudioState.starterText=String(root.querySelector('[name="starterWorkflow"]')?.value||'').trim();
+    const spec=valStudioStarterSpecFromControls(root);
+    valStudioState.notice=spec.trigger?.type==='krisp_transcript_received'
+      ?'Transcript email draft started. Review the email before testing.'
+      :'Trigger/action draft started. Connect the source and permission boundary before activation.';
     valStudioState.mode='builder';
     valStudioState.stage=0;
     valStudioState.environmentId='';
@@ -29111,9 +29322,16 @@ function wireValStudio(){
     valStudioState.versionNumber=0;
     valStudioState.activeVersionNumber=0;
     valStudioState.lastTest=null;
-    valStudioState.spec=valStudioDefaultSpec();
+    valStudioState.communications=null;
+    valStudioState.spec=spec;
     renderValStudio();
   }));
+  root.querySelector('[data-val-studio-trigger-source]')?.addEventListener('change',event=>{
+    const source=event.target.value;
+    const item=valStudioConnectorCatalog().find(connector=>connector.source===source)||valStudioConnectorCatalog()[0];
+    const select=root.querySelector('[data-val-studio-trigger-event]');
+    if(select)select.innerHTML=(item.events||[]).map(label=>'<option value="' + escapeHtml(label) + '">' + escapeHtml(label) + '</option>').join('');
+  });
   const importInput=root.querySelector('[data-val-studio-import-file]');
   root.querySelector('[data-val-studio-import]')?.addEventListener('click',()=>importInput?.click());
   importInput?.addEventListener('change',async()=>{
@@ -29133,6 +29351,23 @@ function wireValStudio(){
       renderValStudio();
     }
   }));
+  root.querySelectorAll('[data-val-studio-delete]').forEach(button=>button.addEventListener('click',()=>{
+    valStudioState.deleteConfirmId=button.dataset.valStudioDelete||'';
+    renderValStudio();
+  }));
+  root.querySelectorAll('[data-val-studio-delete-confirm]').forEach(button=>button.addEventListener('click',async()=>{
+    button.disabled=true;
+    try{
+      await deleteValStudioEnvironment(button.dataset.valStudioDeleteConfirm||'');
+    }catch(error){
+      valStudioState.notice=error.message;
+      renderValStudio();
+    }
+  }));
+  root.querySelector('[data-val-studio-delete-cancel]')?.addEventListener('click',()=>{
+    valStudioState.deleteConfirmId='';
+    renderValStudio();
+  });
   root.querySelectorAll('[data-val-studio-open]').forEach(button=>button.addEventListener('click',async()=>{
     const environment=valStudioState.environments.find(item=>item.id===button.dataset.valStudioOpen);
     if(!environment)return;

@@ -204,8 +204,14 @@ test('VAL Studio opens as an Environment library and preserves live detail state
   assert.match(hearth,/function valStudioLibraryView\(\)/);
   assert.match(hearth,/data-val-studio-new>New Environment/);
   assert.match(hearth,/data-val-studio-open=/);
+  assert.match(hearth,/data-val-studio-delete=/);
   assert.match(hearth,/Your first Environment starts with a repeated outcome\./);
   assert.match(hearth,/valStudioState\.mode='library'/);
+  assert.match(hearth,/function valStudioStarterView\(\)/);
+  assert.match(hearth,/data-val-studio-trigger-source/);
+  assert.match(hearth,/VAL enacted an Action Item/);
+  assert.match(hearth,/Send me a Text Message/);
+  assert.doesNotMatch(hearth,/val-studio-connector-inventory/);
   assert.match(hearth,/function valStudioResumeStage\(spec=\{\}\)/);
   assert.match(hearth,/environment\.draftVersion\?valStudioResumeStage\(valStudioState\.spec\):0/);
   assert.match(hearth,/function valStudioLiveView\(\)/);
@@ -222,8 +228,11 @@ test('VAL Studio can share and import sanitized Environment files',()=>{
   assert.match(hearth,/data-val-studio-share>Share Environment/);
   assert.match(hearth,/function shareValStudioEnvironment\(\)/);
   assert.match(hearth,/function importValStudioEnvironment\(file\)/);
+  assert.match(hearth,/function deleteValStudioEnvironment\(id\)/);
   assert.match(hearth,/\.val-environment\.json/);
   assert.match(hearth,/Imported as a disconnected Draft/);
+  assert.match(routes,/app\.delete\('\/api\/val\/environments\/:id'/);
+  assert.match(fs.readFileSync(path.join(root,'services','valEnvironments.js'),'utf8'),/blockId:'send_sms',label:'Send me a Text Message'/);
 });
 
 test('activation is blocked until the exact draft version has a successful test',async()=>{
