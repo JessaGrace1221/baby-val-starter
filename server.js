@@ -169,6 +169,7 @@ function executiveTimeZone(){
 }
 function setExecutiveTimeZone(value=''){
   EXECUTIVE_TIMEZONE=validIanaTimeZone(value)||CLIENT_CONFIG.timezone||'America/New_York';
+  CLIENT_CONFIG.timezone=EXECUTIVE_TIMEZONE;
   return EXECUTIVE_TIMEZONE;
 }
 const VAL_EDITION = String(process.env.VAL_EDITION || 'baby').trim().toLowerCase();
