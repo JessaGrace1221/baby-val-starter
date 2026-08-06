@@ -275,21 +275,32 @@ const clientFeatureLocks = {
   voiceEnabled:true
 };
 let clientDisplayName = '';
+let executiveTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York';
 function clientFirstName(fallback = ''){
   return String(clientDisplayName || fallback || '').trim().split(/\s+/)[0] || '';
 }
+function hourInExecutiveTimezone(date = new Date()){
+  try{
+    const parts = new Intl.DateTimeFormat('en-US', {hour:'2-digit',hourCycle:'h23',timeZone:executiveTimezone}).formatToParts(date);
+    return Number(parts.find((part) => part.type === 'hour')?.value || date.getHours());
+  }catch(_error){
+    return date.getHours();
+  }
+}
 function valTimeGreeting(name = clientFirstName()){
-  const hour = new Date().getHours();
+  const hour = hourInExecutiveTimezone();
   const daypart = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening';
   return 'Good ' + daypart + (name ? ', ' + name : '') + '.';
 }
 function personalizeTenantGreeting(value = ''){
   const name = clientFirstName();
   const text = String(value || '');
-  if(!name || /^Jessa$/i.test(name)) return text;
-  return text
+  const personalized = (!name || /^Jessa$/i.test(name)) ? text : text
     .replace(/^(Good\s+(?:morning|afternoon|evening))\s*,?\s*Jessa\b/i, '$1, ' + name)
     .replace(/^Jessa\b/i, name);
+  return /^Good\s+(?:morning|afternoon|evening)\b/i.test(personalized)
+    ? personalized.replace(/^Good\s+(?:morning|afternoon|evening)(?:\s*,\s*[^.]+)?\./i, valTimeGreeting(name))
+    : personalized;
 }
 const scraperSessions = {};
 const attendedRoomsStorageKey = 'val.hearth.attendedRooms.v1';
@@ -346,7 +357,7 @@ let workspaceReturnTarget = 'home';
 const selfCalendarEmails = ['jessa@jessagrace.com','jessa@goallprogram.com','jessa@goalprogram.com','jessa.grace@gmail.com'];
 
 function hearthTimePeriodFromDate(date = new Date()){
-  const hour = date.getHours();
+  const hour = hourInExecutiveTimezone(date);
   if(hour >= 5 && hour < 11) return 'morning';
   if(hour >= 11 && hour < 17) return 'afternoon';
   if(hour >= 17 && hour < 21) return 'evening';
@@ -18303,6 +18314,7 @@ async function hydrateClientConfig(){
     clientFeatureLocks.linkedinHomeComingSoon = Boolean(flags.linkedinHomeComingSoon);
     clientFeatureLocks.babyValEdition = Boolean(flags.babyValEdition);
     clientFeatureLocks.voiceEnabled = flags.voiceEnabled !== false;
+    executiveTimezone = String(config?.timezone || executiveTimezone).trim() || executiveTimezone;
     applySystemUpdateStatus(config?.systemUpdate || {});
     clientDisplayName = String(config?.clientName||'').trim();
     states.quiet.title = valTimeGreeting();
@@ -19441,7 +19453,7 @@ function chiefOfStaffPerspectiveFromBriefing(briefing = {}){
     const firstLineIsGreeting = /^Good (?:morning|afternoon|evening),\s+/i.test(preparedLines[0]);
     const bodyLines = firstLineIsGreeting ? preparedLines.slice(1) : preparedLines;
     return {
-      headline: firstLineIsGreeting ? preparedLines[0] : 'Good morning, ' + name + '.',
+      headline: firstLineIsGreeting ? preparedLines[0] : valTimeGreeting(name),
       witness: bodyLines[0],
       orientation: bodyLines[1] || permissionLine || 'I will keep the desk clear until something earns your attention.',
       permission: bodyLines[2] || permissionLine || 'Nothing sends, imports, or changes externally unless you approve it.'
@@ -19467,7 +19479,7 @@ function chiefOfStaffPerspectiveFromBriefing(briefing = {}){
     ? selectedName + ' can show the source trail behind this read.'
     : selectedName + ' has the clearest Board lens if you want the full context.';
   return {
-    headline: 'Good morning, ' + name + '.',
+    headline: valTimeGreeting(name),
     witness: witnessLine || (reason ? subject + ': ' + reason.replace(/[.!?]+$/, '') + '.' : 'No single source-backed move has earned the room yet.'),
     orientation: observerContextLine,
     permission: lines.find((line) => /\bverified\b|\bsource\b/i.test(line)) || (evidenceCount
@@ -19492,7 +19504,7 @@ function applyWitnessingPendingPerspective(status = observerBoardState){
   const name = homePerspectiveUserName();
   const answered = Math.max(0, Number(status?.witnessingAnsweredCount) || 0);
   const atFirstLook = status?.witnessingStage === 'witness_connect_sources';
-  if(title) title.textContent = 'Good morning, ' + name + '.';
+  if(title) title.textContent = valTimeGreeting(name);
   if(witness) witness.textContent = atFirstLook
     ? 'Your Witnessing Session is paused at First Look.'
     : 'Your Witnessing Session is not complete yet.';
@@ -22037,6 +22049,29 @@ function valWitnessingConnectionCard(connection = {}){
   ].join('');
 }
 
+const executiveTimezoneChoices = [
+  ['America/New_York','Eastern Time'],
+  ['America/Chicago','Central Time'],
+  ['America/Denver','Mountain Time'],
+  ['America/Phoenix','Arizona Time'],
+  ['America/Los_Angeles','Pacific Time'],
+  ['America/Anchorage','Alaska Time'],
+  ['Pacific/Honolulu','Hawaii Time'],
+  ['America/Toronto','Toronto'],
+  ['Europe/London','London'],
+  ['Europe/Paris','Central European Time'],
+  ['Asia/Dubai','Dubai'],
+  ['Asia/Kolkata','India Standard Time'],
+  ['Asia/Singapore','Singapore'],
+  ['Australia/Sydney','Sydney']
+];
+
+function executiveTimezoneOptions(){
+  const choices = executiveTimezoneChoices.slice();
+  if(executiveTimezone && !choices.some(([value]) => value === executiveTimezone)) choices.unshift([executiveTimezone, executiveTimezone]);
+  return choices.map(([value,label]) => '<option value="' + escapeHtml(value) + '"' + (value === executiveTimezone ? ' selected' : '') + '>' + escapeHtml(label) + '</option>').join('');
+}
+
 function renderValWitnessingConnectionHub(){
   return [
     '<section class="val-witnessing-connection-hub" aria-label="Connect your world">',
@@ -22049,6 +22084,12 @@ function renderValWitnessingConnectionHub(){
         '<p class="val-witnessing-connection-loading">Checking secure connections...</p>',
       '</div>',
       '<div class="val-witnessing-credential-slot" data-val-witnessing-credential-slot></div>',
+      '<div class="val-witnessing-timezone">',
+        '<label for="val-executive-timezone">Your timezone</label>',
+        '<p>VAL uses this for greetings, calendars, scheduled work, and Board briefings.</p>',
+        '<select id="val-executive-timezone" data-val-executive-timezone>' + executiveTimezoneOptions() + '</select>',
+        '<small data-val-timezone-status>Saved changes apply everywhere in this VAL.</small>',
+      '</div>',
       '<div class="val-witnessing-connection-footer">',
         '<small>Google, Outlook, and Krisp open their own secure connection page. API keys are encrypted and never shown again.</small>',
         '<button type="button" data-val-witnessing-action="true" data-workflow-action="valWitnessingRefreshConnections">Refresh connection status</button>',
@@ -22056,6 +22097,27 @@ function renderValWitnessingConnectionHub(){
     '</section>'
   ].join('');
 }
+
+document.addEventListener('change', async(event) => {
+  const select = event.target.closest?.('[data-val-executive-timezone]');
+  if(!select) return;
+  const status = select.parentElement?.querySelector('[data-val-timezone-status]');
+  select.disabled = true;
+  if(status) status.textContent = 'Saving timezone...';
+  try{
+    const result = await postJson('/api/val/preferences/timezone', {timezone:select.value});
+    executiveTimezone = String(result.timezone || select.value);
+    applyHearthTimePeriod();
+    if(executiveBriefingState) applyVelocityPerspective(executiveBriefingState);
+    else if(title) title.textContent = valTimeGreeting();
+    document.querySelectorAll('[data-val-executive-timezone]').forEach((control) => { control.value = executiveTimezone; });
+    document.querySelectorAll('[data-val-timezone-status]').forEach((node) => { node.textContent = 'Timezone saved. VAL now uses ' + select.options[select.selectedIndex].text + '.'; });
+  }catch(error){
+    if(status) status.textContent = 'Could not save timezone: ' + (error.message || 'Unknown error.');
+  }finally{
+    select.disabled = false;
+  }
+});
 
 function valWitnessingConnectionSurface(){
   if(deskWorkspace?.getAttribute('aria-hidden') === 'false' && workspaceInputPanel?.querySelector('[data-val-witnessing-connection-list]')) return workspaceInputPanel;
