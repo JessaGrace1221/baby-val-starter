@@ -60,6 +60,7 @@ test('runtime resolver prefers tenant vault and permits an explicit platform fal
 test('OpenAI tenant key validation proves that the key can generate a response',()=>{
   const testBlock=server.match(/async function testTenantApiKey[\s\S]*?\n}\nfunction platformKeyFallbackAllowed/)?.[0]||'';
   assert.match(testBlock,/https:\/\/api\.openai\.com\/v1\/responses/);
+  assert.match(testBlock,/Return this JSON object:/);
   assert.match(testBlock,/could not generate a response/);
   assert.doesNotMatch(testBlock,/https:\/\/api\.openai\.com\/v1\/models/);
 });

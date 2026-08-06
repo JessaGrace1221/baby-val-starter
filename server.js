@@ -2843,7 +2843,7 @@ async function testTenantApiKey(req,provider){
       const body={
         model,
         instructions:'Return strict JSON only.',
-        input:[{role:'user',content:'Return {"ok":true} and nothing else.'}],
+        input:[{role:'user',content:'Return this JSON object: {"ok":true} and nothing else.'}],
         max_output_tokens:32,
         text:{format:{type:'json_object'}}
       };
